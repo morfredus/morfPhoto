@@ -1,0 +1,38 @@
+{
+  "_comment": "Configuration morfPhoto. Copier en 'morfphoto.json' et adapter. Le service la lit via --config, ou la cherche dans le dossier courant, a cote du binaire, ou dans /etc/morfsystem/morfphoto/.",
+
+  "app_name": "morfPhoto",
+
+  "_comment_port": "8793 : port reserve de morfPhoto dans le bloc de service (8787-8799), enregistre dans 'ports.allocations' de morfTools/ecosystem.json. 'morf doctor' echoue tant que la configuration et le registre divergent.",
+  "http_port": 8793,
+  "bind_address": "0.0.0.0",
+
+  "beacon": {
+    "_comment": "Annonce de presence sur le LAN (protocole morfBeacon, port du parc).",
+    "enabled": true,
+    "udp_port": 45454,
+    "interval_ms": 15000
+  },
+
+  "modules": [
+    {
+      "_comment": "Module metier : indexation permanente de la phototheque. 'roots' definit les RACINES AUTORISEES (perimetre que morfPhoto a le droit d'explorer) ; PhotoHub ne peut declarer de selection qu'a l'interieur. 'db_path' vide => etat du service (/var/lib/morfsystem/morfphoto/photos.db).",
+      "type": "photo",
+      "id": "photo-1",
+      "db_path": "",
+      "roots": [
+        "/mnt/photos",
+        "/srv/archives-photo"
+      ],
+      "watch": {
+        "_comment": "Cadence de la reconciliation periodique (surveillance continue).",
+        "interval_ms": 300000
+      },
+      "exiftool": {
+        "_comment": "ExifTool est un PREREQUIS SYSTEME, non installe par service.py : `sudo apt install libimage-exiftool-perl` (Debian/Ubuntu/Raspberry Pi OS). Sans lui, les fichiers sont indexes mais les metadonnees restent vides ; /api/v1/index/status l'annonce alors dans last_error. 'binary' : nom sur le PATH, ou chemin complet (utile sous Windows). 'stay_open' : garder un process ExifTool ouvert (bien plus rapide sur une grosse phototheque).",
+        "binary": "exiftool",
+        "stay_open": true
+      }
+    }
+  ]
+}

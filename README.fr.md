@@ -1,0 +1,106 @@
+# morfPhoto
+
+*Lire dans une autre langue : [English](README.md) · **Français** (ce document).*
+
+[![Version](https://img.shields.io/badge/version-0.3.2-blue)](CHANGELOG.md)
+![C++](https://img.shields.io/badge/C%2B%2B-17-00599C?logo=cplusplus)
+![Qt](https://img.shields.io/badge/Qt-6-41CD52?logo=qt)
+![Build](https://img.shields.io/badge/CMake-3.21+-064F8C?logo=cmake)
+![License](https://img.shields.io/badge/License-GPL--3.0--only-blue)
+
+**morfPhoto maintient une base locale qui reflète en permanence l'état réel des
+dossiers photo surveillés.** C'est le propriétaire unique des métadonnées photo
+dans l'écosystème morfSystem.
+
+C'est un **service permanent**, pas un importateur qu'on lance quand on y pense.
+Tant qu'il tourne, il surveille les dossiers configurés, repère les fichiers
+nouveaux, modifiés ou disparus, extrait leurs métadonnées avec ExifTool et tient
+une base SQLite à jour, sans intervention. La base n'est pas un export des
+dossiers : elle en est la représentation. morfPhoto ne produit **aucune analyse
+métier** - regroupement, déduplication et interprétation vivent dans une couche
+distincte (morfAnalytics).
+
+## Ce qu'il fait
+
+- **Indexe une photothèque locale.** Les racines configurées sont parcourues
+  récursivement ; le triplet `(chemin, taille, mtime)` décide seul de ce qui doit
+  être retraité (pas de hash complet).
+- **Extrait l'EXIF via ExifTool** (`QProcess`, mode persistant `-stay_open`) et
+  stocke les valeurs **brutes** : 49, 50 et 51 mm restent 49, 50 et 51 ; un RAW et
+  son JPEG sont deux lignes distinctes. La vitesse est gardée en `1/250` et en
+  secondes.
+- **Surveille en continu** : une réconciliation périodique garde la base fidèle.
+  Une seule passe à la fois - une demande concurrente est refusée, jamais empilée.
+- **Ne détruit jamais implicitement** : un fichier disparu est marqué absent ;
+  retirer un dossier est un retrait doux qui conserve son historique.
+- **Expose une API HTTP stable** et s'annonce sur le réseau local avec morfBeacon
+  et la capacité `photo_index`.
+
+## Contrat HTTP (`/api/v1`)
+
+```
+GET  /status                     diagnostic riche (compatible morfBeacon)
+GET  /healthz                    vivant ?
+GET  /api/v1/photos              liste paginée + filtrée (year, camera, lens, type, folder, state)
+GET  /api/v1/photos/{id}         une fiche
+GET  /api/v1/photos/summary      compteurs globaux
+GET  /api/v1/photos/cameras|lenses|focals|years
+POST /api/v1/index               déclenche une passe (async) : {"mode":"incremental|full"}
+GET  /api/v1/index/status        état d'indexation + dernière passe
+GET  /api/v1/folders             sélections surveillées
+POST /api/v1/folders             déclare une sélection (403 hors d'une racine autorisée)
+PATCH  /api/v1/folders/{id}      active / désactive
+DELETE /api/v1/folders/{id}      retrait doux (historique conservé)
+```
+
+Les racines autorisées sont déclarées dans la configuration ; les sélections
+gérées par l'API restent toujours à l'intérieur.
+
+## Compiler
+
+Nécessite **Qt 6** (Core, Network, Sql, Concurrent) et, à l'exécution, **ExifTool**.
+morfBeacon est vendoré dans `third_party/morf/beacon`.
+
+**ExifTool est une dépendance d'exécution obligatoire**, et `service.py` ne
+l'installe pas (c'est un paquet système, pas un produit de la compilation). Sans
+lui, le service tourne quand même et indexe les fichiers, mais chaque extraction de
+métadonnées échoue et les colonnes EXIF restent vides (aucun boîtier, objectif ni
+année). L'installer depuis la distribution :
+
+```sh
+sudo apt install libimage-exiftool-perl   # Debian, Ubuntu, Raspberry Pi OS
+```
+
+Sous Windows, installer ExifTool puis placer `exiftool.exe` dans le `PATH`, ou
+pointer `modules[].exiftool.binary` de la configuration sur son chemin complet. Une
+fois installé, `GET /api/v1/index/status` renvoie `exiftool.available: true` ; s'il
+manque, le même endpoint le signale dans `last_error`.
+
+```sh
+cmake --preset mingw        # ou linux / linux-arm64
+cmake --build --preset mingw
+```
+
+## Lancer
+
+```sh
+./build-mingw/service/morfphoto.exe --config config/morfphoto.json
+curl http://127.0.0.1:8793/api/v1/photos/summary
+```
+
+## Installer en service
+
+```sh
+# Toutes plateformes : Linux, Windows, Raspberry Pi
+sudo ./service.py install      # compile si besoin, installe, démarre
+sudo ./service.py update       # recompile, remplace le binaire, redémarre
+sudo ./service.py uninstall    # désinscrit, en conservant votre configuration
+./service.py status            # ce que le système en dit
+```
+
+Le déploiement est vendoré dans `third_party/morf/morfdeploy` ; resynchroniser les
+copies vendorées avec `scripts/sync-morf.sh`.
+
+## Licence
+
+GPL-3.0-only - © 2026 morfredus (Frédéric Biron).

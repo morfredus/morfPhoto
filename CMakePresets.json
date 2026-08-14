@@ -1,0 +1,48 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 21, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "linux",
+      "displayName": "morfPhoto (Linux x86_64 natif — Linux ou WSL2)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    },
+    {
+      "name": "linux-arm64",
+      "displayName": "morfPhoto (Linux ARM64 natif, sur Raspberry Pi aarch64)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-arm64",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    },
+    {
+      "name": "mingw",
+      "displayName": "morfPhoto (Windows, MSYS2/MinGW)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-mingw",
+      "environment": {
+        "MSYSTEM": "MINGW64",
+        "CHERE_INVOKING": "1",
+        "MSYS2_PATH_TYPE": "inherit",
+        "PATH": "C:/msys64/mingw64/bin;C:/msys64/usr/bin;$penv{PATH}"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_CXX_COMPILER": "C:/msys64/mingw64/bin/c++.exe",
+        "CMAKE_MAKE_PROGRAM": "C:/msys64/mingw64/bin/ninja.exe",
+        "CMAKE_PREFIX_PATH": "C:/msys64/mingw64"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "linux", "configurePreset": "linux" },
+    { "name": "linux-arm64", "configurePreset": "linux-arm64" },
+    { "name": "mingw", "configurePreset": "mingw" }
+  ],
+  "testPresets": [
+    { "name": "linux", "configurePreset": "linux", "output": { "outputOnFailure": true } },
+    { "name": "linux-arm64", "configurePreset": "linux-arm64", "output": { "outputOnFailure": true } },
+    { "name": "mingw", "configurePreset": "mingw", "output": { "outputOnFailure": true } }
+  ]
+}

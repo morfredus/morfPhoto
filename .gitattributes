@@ -1,0 +1,16 @@
+# Normalisation des fins de ligne (LF dans le dépôt, natif au checkout).
+# Évite le bruit CRLF et protège les scripts shell (shebang « bash\r »).
+* text=auto
+
+*.sh   text eol=lf
+*.ps1  text eol=crlf
+*.bat  text eol=crlf
+
+# Binaires : aucune conversion.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.ico  binary
+*.pdf  binary
+*.tar  binary
+*.zip  binary

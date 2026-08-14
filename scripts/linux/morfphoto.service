@@ -1,0 +1,34 @@
+# Service systemd pour morfPhoto.
+#
+# Le binaire et sa configuration sont INSTALLES dans un dossier fixe (par defaut
+# /opt/morfphoto), independant du clone git : deplacer/renommer le depot (ou une
+# synchro Syncthing) ne casse pas le service. morfdeploy remplace __RUN_USER__,
+# __APP_DIR__ et __CONFIG_DIR__.
+#
+# Trois zones distinctes (voir docs/fr/FILESYSTEM.md) : le PROGRAMME dans
+# __APP_DIR__ (/opt), la CONFIG ADMIN en lecture seule dans __CONFIG_DIR__ (/etc),
+# et l'ETAT PERSISTANT dans /var/lib. StateDirectory= fait creer ce dernier par
+# systemd, possede par User= et accessible en ecriture, puis l'expose au service
+# via $STATE_DIRECTORY. C'est la reponse structurelle au probleme de droits qui
+# rendait le coffre morfCollector inecrivable sous un /etc appartenant a root.
+
+[Unit]
+Description=morfPhoto - service d'indexation de photothèque
+After=local-fs.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__RUN_USER__
+Group=__RUN_USER__
+WorkingDirectory=__APP_DIR__
+# Cree et possede /var/lib/morfsystem/morfphoto ; expose $STATE_DIRECTORY.
+StateDirectory=morfsystem/morfphoto
+ExecStart=__APP_DIR__/morfphoto --config __CONFIG_DIR__/morfphoto.json
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

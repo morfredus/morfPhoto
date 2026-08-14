@@ -1,0 +1,34 @@
+{
+  "_comment": "Deployment facts for this project, read by morfdeploy. The four install steps live in one place for the whole parc; this file states only what is specific to this service. Adding a platform never touches this file.",
+  "service_name": "morfphoto",
+  "display_name": "morfPhoto",
+  "description": "Permanent photo-library indexing service",
+  "binary": "morfphoto",
+  "_comment_app_dir": "Where the binary and configurations are installed, per platform. Overridden by the MORF_APP_DIR environment variable, which replaces the per-project prefixes (MT_, MN_, MS_) that had already drifted apart.",
+  "app_dir": {
+    "linux": "/opt/morfphoto",
+    "windows": "%ProgramData%/morfphoto"
+  },
+  "_comment_configs": "Copied at install. 'overwrite' is false by default because these hold settings edited by hand on the machine. An absolute destination is honoured as-is, which is how the shared parc configuration reaches /etc/morfsystem.",
+  "configs": [
+    {
+      "source": "config/morfphoto.example.json",
+      "dest": "morfphoto.json",
+      "migrate_from": [
+        "/etc/morfphoto/morfphoto.json",
+        "/opt/morfphoto/morfphoto.json"
+      ]
+    }
+  ],
+  "status_url": "http://127.0.0.1:8793/status",
+  "_comment_config_dir": "La configuration vit sous /etc/morfsystem/<service> : un point d'entree UNIQUE dans /etc pour tout le parc, et non a cote du binaire dans /opt. Effacer /opt/<service> pour reinstaller proprement n'emporte donc pas les reglages.",
+  "config_dir": {
+    "linux": "/etc/morfsystem/morfphoto",
+    "windows": "%ProgramData%/morfsystem/morfphoto"
+  },
+  "_comment_state_dir": "L'ETAT PERSISTANT (cles, coffre, curseurs, sequences de sync, index, derniere execution) vit sous /var/lib/morfsystem/<service> : distinct de la config (/etc, admin, lecture seule) et du programme (/opt). Sous Linux, l'unite declare StateDirectory=morfsystem/<service> : systemd cree ce dossier possede par le user du service. Le service resout sa racine d'etat via $STATE_DIRECTORY (repli /var/lib/morfsystem/<service>). Ne jamais y mettre de config admin, ni mettre d'etat dans /etc (c'est ce qui rendait le coffre morfCollector inecrivable). Sauvegarder /var/lib = sauvegarder tout ce qui est vivant.",
+  "state_dir": {
+    "linux": "/var/lib/morfsystem/morfphoto",
+    "windows": "%ProgramData%/morfsystem/morfphoto/state"
+  }
+}

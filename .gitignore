@@ -1,0 +1,144 @@
+# =============================================================================
+# 1. SECRETS, CONFIGURATIONS LOCALES ET CRITIQUES (NE JAMAIS VERSIONNER)
+# =============================================================================
+# Configuration WiFi et secrets embarqués (spécifique ESP32/PlatformIO)
+include/secrets.h
+include/wifi-config.h
+
+# Fichier de configuration locale (contient mots de passe, jetons, chemins)
+config.json
+
+# Variables d'environnement (peuvent contenir des clés d'API, tokens, etc.)
+.env
+.env.local
+.env.*.local
+*.env.local
+
+# Fichier et dossiers sensibles spécifiques à l'utilisateur
+.morfredus/
+
+# Clés de sécurité et certificats (filet de sécurité)
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+
+# Fichiers d'état locaux
+beacon_status.md
+
+
+# =============================================================================
+# 2. CONFIGURATION ET CACHE DES ÉDITEURS / IDE (VS Code, etc.)
+# =============================================================================
+# Dossier de configuration de l'espace de travail VS Code (englobe tout)
+.vscode/
+.vs/
+*.code-workspace
+*.user
+
+# Fichiers d'autres IDE/Environnements (Eclipse, etc.)
+.classpath
+.project
+.settings
+
+# Backups et fichiers temporaires d'éditeurs (vim, emacs, nano, etc.)
+*.swp
+*.swo
+*~
+*.bak
+*.tmp
+*.orig
+
+
+# =============================================================================
+# 3. ENVIRONNEMENT DE COMPILATION C++ / EMBARQUÉ (PlatformIO, CMake, Arduino)
+# =============================================================================
+# Dossiers et cache PlatformIO
+.pio/
+.lib/
+.cache/
+
+# Dossiers de construction et builds (génériques et spécifiques)
+/build/
+/build-*/
+/out/
+.build/
+build/
+tmp/
+temp/
+.arduino/
+arduino/
+hardware/
+CMakeUserPresets.json
+
+# Fichier généré par CMake pour clangd/IntelliSense
+compile_commands.json
+
+# Fichiers d'objets, de listes et intermédiaires de compilation
+*.o
+*.lss
+*.elf.map
+*.suo
+
+# Artefacts compilés (binaires et dumps)
+*.hex
+*.elf
+*.bin
+*.lst
+*.map
+*.eep
+*.sym
+
+
+# =============================================================================
+# 4. COMPILATION DE L'INTERFACE WEB & DISTRIBUTION
+# =============================================================================
+# Dépendances Node (au cas où un projet en aurait besoin)
+node_modules/
+
+# Distribution (artefacts générés par les scripts de packaging Windows/Linux)
+/dist/
+
+# Outils de packaging Linux téléchargés à la demande (linuxdeploy, plugin Qt)
+/.cache/appimage-tools/
+
+# Interface web générée (web_src/ -> web/ -> src/generated/)
+# Jamais éditée à la main, régénérée automatiquement avant chaque compilation
+web/
+src/generated/
+
+
+# =============================================================================
+# 5. ENVIRONNEMENTS ET SCRIPTING PYTHON
+# =============================================================================
+# Environnements virtuels
+.venv/
+venv/
+env/
+
+# Byte-code Python, documentation et logs
+__pycache__/
+*.pyc
+*.log
+.Sphinx/
+
+
+# =============================================================================
+# 6. SYSTEME, LOGS ET DIVERS
+# =============================================================================
+# Logs téléchargés / cache
+*.gz
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# macOS
+.DS_Store
+._*
+.AppleDouble
+.LSOverride
+.Spotlight-V100
+.Trashes
+
