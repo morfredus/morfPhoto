@@ -173,6 +173,10 @@ int main(int argc, char** argv) {
         // file_type est connu par le scan (pas besoin d'EXIF) : il doit s'interner.
         CHECK(!cols.value(QStringLiteral("file_type")).toArray().at(0).isNull(),
               "dataset: file_type present -> index non null");
+        // Table des dossiers : id -> libelle (pour filtrer/etiqueter par dossier).
+        const QJsonObject folders = ds.value(QStringLiteral("folders")).toObject();
+        CHECK(folders.value(QString::number(fid)).toString() == photos,
+              "dataset: folders mappe l'id du dossier vers son chemin");
     }
 
     // --- 4) Source distante perdue en cours de vie : ne pas confondre indisponible

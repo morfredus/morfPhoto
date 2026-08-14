@@ -3,6 +3,29 @@
 Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/)
 et du [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [0.5.2] - 2026-08-14
+
+### Corrigé
+
+- **Troncature des grandes réponses HTTP** dans `HttpServer::reply()`. Resynchronisation
+  du correctif issu du patron `morfTemplateService` : la méthode fermait la connexion
+  sans drainer le tampon d'écriture, ce qui coupait toute réponse dépassant la taille
+  du tampon socket (~20 Ko). On attend désormais que `bytesToWrite()` retombe à zéro
+  avant `disconnectFromHost()`.
+- Resynchronisation de la copie vendorée de **morfBeacon** (`third_party/morf/beacon`)
+  en 0.6.1 : même classe de bug corrigée dans son `StatusServer` (grande réponse
+  `/status` coupée faute de drainage du tampon d'écriture).
+
+## [0.5.1] - 2026-08-14
+
+### Ajouté
+
+- **Table des dossiers dans l'export `/api/v1/photos/dataset`.** La colonne
+  `folder_id` portait l'identifiant brut ; l'export inclut désormais un objet
+  `folders` (id → libellé, le label s'il existe sinon le chemin) pour que la couche
+  d'analyse puisse **filtrer et étiqueter par dossier** sans deviner un nom.
+  Strictement additif.
+
 ## [0.5.0] - 2026-08-14
 
 ### Ajouté

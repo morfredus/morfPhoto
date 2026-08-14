@@ -564,8 +564,22 @@ QJsonObject PhotoRepository::photoDataset() {
     QJsonObject dictionaries{
         {"camera", camDict}, {"lens", lensDict}, {"file_type", typeDict},
     };
+
+    // Libellés des dossiers : la colonne folder_id porte l'identifiant brut ; cette
+    // table de correspondance id -> libellé permet à la couche d'analyse de filtrer
+    // et d'étiqueter par dossier sans deviner un nom. Libellé = label si présent,
+    // sinon le chemin. Clé en texte (JSON n'a pas de clé entière).
+    QJsonObject folders;
+    {
+        QSqlQuery fq(db());
+        fq.exec(QStringLiteral("SELECT id, COALESCE(label, path) FROM folders"));
+        while (fq.next())
+            folders.insert(QString::number(fq.value(0).toInt()), fq.value(1).toString());
+    }
+
     return QJsonObject{
         {"count", count}, {"dictionaries", dictionaries}, {"columns", columns},
+        {"folders", folders},
     };
 }
 

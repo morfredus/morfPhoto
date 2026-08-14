@@ -223,7 +223,13 @@ void HttpServer::reply(QTcpSocket* sock, int code, const QByteArray& reason, con
     resp += "Connection: close\r\n\r\n";
     resp += body;
     sock->write(resp);
-    sock->flush();
+    // Vider le tampon d'écriture AVANT de fermer : sur une grande réponse (page HTML,
+    // /status volumineux), le corps déborde du tampon socket (~20 Ko constaté) et
+    // `disconnectFromHost` seul en tronque la fin côté client. On draine jusqu'à ce
+    // qu'il ne reste rien à écrire, avec un délai de garde pour ne jamais bloquer.
+    while (sock->bytesToWrite() > 0)
+        if (!sock->waitForBytesWritten(2000))
+            break;
     sock->disconnectFromHost();
 }
 
