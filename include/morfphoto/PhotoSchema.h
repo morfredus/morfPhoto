@@ -23,7 +23,7 @@
 // -----------------------------------------------------------------------------
 namespace morfphoto {
 
-inline constexpr int kSchemaVersion = 2;
+inline constexpr int kSchemaVersion = 3;
 
 // Instructions de la migration 001 (création initiale). La colonne calculée
 // `taken_year` permet de regrouper par année sans reparser la date à chaque fois.
@@ -130,12 +130,25 @@ inline QStringList schemaV2Statements() {
     };
 }
 
+// Migration 003 : rendre visible une passe INTERROMPUE par une source indisponible.
+// Une racine réseau (SMB/CIFS, NFS...) valide au départ peut disparaître pendant
+// une passe. On ne marque alors AUCUN fichier disparu (un scan partiel n'est pas
+// une référence fiable) : on compte les sélections sautées ici, et `index_runs.state`
+// vaut alors 'interrupted' au lieu de 'done'. Colonne additive, valeur 0 par défaut
+// pour tout l'historique existant.
+inline QStringList schemaV3Statements() {
+    return {
+        QStringLiteral("ALTER TABLE index_runs ADD COLUMN files_unavailable INTEGER NOT NULL DEFAULT 0"),
+    };
+}
+
 // Instructions à exécuter pour atteindre une version de schéma donnée. Le dépôt
 // applique dans l'ordre chaque version manquante (voir applyMigrations).
 inline QStringList migrationStatements(int version) {
     switch (version) {
     case 1:  return schemaV1Statements();
     case 2:  return schemaV2Statements();
+    case 3:  return schemaV3Statements();
     default: return {};
     }
 }

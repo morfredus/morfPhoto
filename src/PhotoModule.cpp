@@ -46,6 +46,9 @@ PhotoModule::PhotoModule(const QString& id, const QJsonObject& params, QObject* 
 
     const QJsonObject watch = params.value(QStringLiteral("watch")).toObject();
     m_intervalMs = watch.value(QStringLiteral("interval_ms")).toInt(m_intervalMs);
+    // Délai borné des sondes d'accessibilité de racine (tolérance aux montages
+    // distants). Configurable : pas de seuil en dur (règle 11 morfSystem).
+    m_probeTimeoutMs = watch.value(QStringLiteral("availability_timeout_ms")).toInt(m_probeTimeoutMs);
 
     const QJsonObject exif = params.value(QStringLiteral("exiftool")).toObject();
     m_exiftoolBinary = exif.value(QStringLiteral("binary")).toString(QStringLiteral("exiftool"));
@@ -158,7 +161,7 @@ void PhotoModule::doPass(IndexMode mode, QVector<int> folderIds, QString trigger
         if (repo.open(m_dbPath)) {
             ExifExtractor extractor(m_exiftoolBinary, m_stayOpen);
             extractor.open();
-            Indexer indexer(&repo, &extractor, m_roots);
+            Indexer indexer(&repo, &extractor, m_roots, m_probeTimeoutMs);
             indexer.run(mode, folderIds, trigger);
             extractor.close();
             const QJsonObject st = indexer.state();
@@ -225,6 +228,7 @@ QJsonArray PhotoModule::cameras() const { return m_readRepo ? m_readRepo->distin
 QJsonArray PhotoModule::lenses()  const { return m_readRepo ? m_readRepo->distinctLenses()  : QJsonArray{}; }
 QJsonArray PhotoModule::focals()  const { return m_readRepo ? m_readRepo->distinctFocals()  : QJsonArray{}; }
 QJsonArray PhotoModule::years()   const { return m_readRepo ? m_readRepo->years()           : QJsonArray{}; }
+QJsonObject PhotoModule::photoDataset() const { return m_readRepo ? m_readRepo->photoDataset() : QJsonObject{}; }
 
 // --- Dossiers ---------------------------------------------------------------
 
@@ -329,6 +333,14 @@ QJsonObject PhotoModule::statusJson() const {
         o["files_present"]  = s.value(QStringLiteral("files_present"));
         o["files_missing"]  = s.value(QStringLiteral("files_missing"));
         o["folders_active"] = s.value(QStringLiteral("folders_active"));
+
+        // Verdict de la dernière passe, en compact : done|interrupted|null. Permet à
+        // morfMonitor de distinguer une indexation terminée normalement d'une passe
+        // interrompue par une source indisponible, sans parser tout `last_run`.
+        bool found = false;
+        const QJsonObject run = m_readRepo->latestRun(&found);
+        o["last_index_state"] = found ? run.value(QStringLiteral("state"))
+                                      : QJsonValue(QJsonValue::Null);
     }
     return o;
 }

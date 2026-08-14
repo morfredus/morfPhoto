@@ -81,6 +81,13 @@ public:
     QJsonArray  years();
     QJsonObject latestRun(bool* found = nullptr);
 
+    // Export compact des colonnes analytiques de toutes les photos PRESENTES, pour
+    // la couche d'analyse (morfAnalytics). Format colonnaire + dictionnaires pour
+    // les chaines repetees (boitier, objectif, type) : une seule reponse legere meme
+    // sur 20 000+ photos. Valeurs BRUTES, aucun regroupement ; les NULL sont
+    // preserves (distinguer valeur absente de valeur nulle, cf qualite des metadonnees).
+    QJsonObject photoDataset();
+
 private:
     bool applyMigrations();
     QJsonArray distinct(const QString& column, const QString& label);

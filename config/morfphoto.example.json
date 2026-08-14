@@ -25,8 +25,9 @@
         "/srv/archives-photo"
       ],
       "watch": {
-        "_comment": "Cadence de la reconciliation periodique (surveillance continue).",
-        "interval_ms": 300000
+        "_comment": "Cadence de la reconciliation periodique (surveillance continue). 'availability_timeout_ms' : delai borne des sondes d'accessibilite d'une racine avant de la declarer indisponible (tolerance aux montages distants type SMB/CIFS ou NFS). Au-dela, la racine est jugee injoignable et la passe est interrompue proprement -- sans marquer les fichiers comme disparus -- au lieu de rester figee le temps du timeout du montage (jusqu'a ~180 s en CIFS). Defaut 5000.",
+        "interval_ms": 300000,
+        "availability_timeout_ms": 5000
       },
       "exiftool": {
         "_comment": "ExifTool est un PREREQUIS SYSTEME, non installe par service.py : `sudo apt install libimage-exiftool-perl` (Debian/Ubuntu/Raspberry Pi OS). Sans lui, les fichiers sont indexes mais les metadonnees restent vides ; /api/v1/index/status l'annonce alors dans last_error. 'binary' : nom sur le PATH, ou chemin complet (utile sous Windows). 'stay_open' : garder un process ExifTool ouvert (bien plus rapide sur une grosse phototheque).",

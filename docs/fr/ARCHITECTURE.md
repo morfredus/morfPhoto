@@ -60,6 +60,17 @@ Tout tourne sur **le thread principal Qt**. Les modules travaillent de façon
 le serveur HTTP répond sans bloquer. Un module lent doit rester asynchrone et ne
 publier qu'un instantané.
 
+Dans morfPhoto, chaque **passe d'indexation** s'exécute donc sur un thread du pool
+(`QtConcurrent`), avec sa propre connexion SQLite : même si une racine réseau se
+bloque (montage SMB/CIFS ou NFS muet), `/status` et `/healthz` continuent de
+répondre sur le thread principal. La passe elle-même ne reste pas figée
+indéfiniment : elle sonde l'accessibilité de chaque racine dans un délai borné
+(`watch.availability_timeout_ms`) et, si une source disparaît, interrompt proprement
+sa réconciliation **sans marquer les fichiers comme disparus** (un scan partiel
+n'est jamais une référence fiable pour un verdict de disparition). L'état de la
+dernière passe distingue `done` (terminée normalement) de `interrupted` (source
+indisponible), visible dans `/status`, `/modules` et `GET /api/v1/index/status`.
+
 ## Dépendance morfBeacon (embarquée)
 
 morfBeacon est vendoré dans `third_party/morf/beacon` (lié statiquement) : build

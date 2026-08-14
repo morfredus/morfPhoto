@@ -61,6 +61,12 @@ int main(int argc, char** argv) {
     CHECK(!isWithinRoots(base + QStringLiteral("/autre/x.jpg"), {photos}), "hors racine -> refuse");
     CHECK(!isWithinRoots(photos + QStringLiteral("/../evasion.jpg"), {photos}), "'..' ne s'echappe pas");
 
+    // Sonde d'accessibilité bornée : un dossier présent répond, un chemin absent est
+    // déclaré indisponible sans attendre (déterministe, hors réseau).
+    CHECK(probeAccessible(photos, 1000), "probe: dossier existant -> accessible");
+    CHECK(!probeAccessible(base + QStringLiteral("/inexistant"), 200),
+          "probe: chemin absent -> indisponible");
+
     // --- 2) Mapping EXIF (souveraineté), sur un JSON figé ---
     const QString json = QStringLiteral(
         "[{\"SourceFile\":\"x\",\"DateTimeOriginal\":\"2017-02-11 22:18:38\","
@@ -144,6 +150,68 @@ int main(int argc, char** argv) {
     idx.run(IndexMode::Incremental, {}, QStringLiteral("cli"));
     CHECK(repo.summary().value(QStringLiteral("files_present")).toInt() == 2,
           "restauration -> fichiers ravives (present)");
+
+    // --- 3b) Export compact pour l'analyse (colonnaire + dictionnaires) ---
+    {
+        const QJsonObject ds = repo.photoDataset();
+        CHECK(ds.value(QStringLiteral("count")).toInt() == 2,
+              "dataset: 2 photos presentes exportees");
+        const QJsonObject cols = ds.value(QStringLiteral("columns")).toObject();
+        CHECK(cols.value(QStringLiteral("taken_at")).toArray().size() == 2,
+              "dataset: colonne taken_at alignee sur count");
+        CHECK(cols.value(QStringLiteral("folder_id")).toArray().size() == 2,
+              "dataset: colonne folder_id alignee sur count");
+        // Extracteur nul : aucune donnee EXIF => les colonnes EXIF sont NULL (jamais 0),
+        // et les dictionnaires de chaines restent vides (pas d'index bidon).
+        CHECK(cols.value(QStringLiteral("iso")).toArray().at(0).isNull(),
+              "dataset: EXIF absent -> null preserve (pas de 0 trompeur)");
+        CHECK(cols.value(QStringLiteral("camera")).toArray().at(0).isNull(),
+              "dataset: boitier absent -> index null");
+        CHECK(ds.value(QStringLiteral("dictionaries")).toObject()
+                .value(QStringLiteral("camera")).toArray().isEmpty(),
+              "dataset: dictionnaire boitiers vide sans EXIF");
+        // file_type est connu par le scan (pas besoin d'EXIF) : il doit s'interner.
+        CHECK(!cols.value(QStringLiteral("file_type")).toArray().at(0).isNull(),
+              "dataset: file_type present -> index non null");
+    }
+
+    // --- 4) Source distante perdue en cours de vie : ne pas confondre indisponible
+    //         et supprimé. Une racine à part (montage réseau simulé) est indexée,
+    //         puis rendue inaccessible : la passe suivante doit interrompre proprement
+    //         SANS marquer aucun fichier disparu.
+    const QString net = base + QStringLiteral("/net");   // racine « réseau » simulée
+    QDir().mkpath(net);
+    writeBytes(net + QStringLiteral("/x.jpg"), 100);
+    writeBytes(net + QStringLiteral("/y.jpg"), 100);
+    const int netFid = repo.addFolder(net, net, QVariant(), true, nowIso());
+    // Indexeur dédié à cette racine ; timeout de sonde court (test déterministe).
+    Indexer netIdx(&repo, nullptr, {net}, 300);
+    netIdx.run(IndexMode::Full, {netFid}, QStringLiteral("cli"));
+    CHECK(lastRunInt(repo, "files_new") == 2, "source: 2 fichiers indexes au depart");
+    CHECK(repo.latestRun(nullptr).value(QStringLiteral("state")).toString()
+              == QLatin1String("done"), "source: premiere passe terminee (done)");
+
+    // La racine disparaît (l'hote du partage s'endort / le montage tombe).
+    QDir(net).removeRecursively();
+    netIdx.run(IndexMode::Incremental, {netFid}, QStringLiteral("cli"));
+    CHECK(lastRunInt(repo, "files_missing") == 0,
+          "source perdue -> AUCUN fichier marque disparu");
+    CHECK(lastRunInt(repo, "files_unavailable") >= 1,
+          "source perdue -> selection comptee indisponible");
+    CHECK(repo.latestRun(nullptr).value(QStringLiteral("state")).toString()
+              == QLatin1String("interrupted"),
+          "source perdue -> passe interrompue (interrupted != done)");
+    QVariantMap fNet; fNet["folder"] = netFid; fNet["state"] = QStringLiteral("present");
+    CHECK(repo.listPhotos(fNet, 1, 10).value(QStringLiteral("total")).toInt() == 2,
+          "source perdue -> fichiers deja acquis restent present");
+
+    // Retour de la source : une passe ultérieure reprend normalement.
+    QDir().mkpath(net);
+    writeBytes(net + QStringLiteral("/x.jpg"), 100);
+    writeBytes(net + QStringLiteral("/y.jpg"), 100);
+    netIdx.run(IndexMode::Incremental, {netFid}, QStringLiteral("cli"));
+    CHECK(repo.latestRun(nullptr).value(QStringLiteral("state")).toString()
+              == QLatin1String("done"), "source revenue -> passe de nouveau normale (done)");
 
     repo.close();
     QDir(base).removeRecursively();

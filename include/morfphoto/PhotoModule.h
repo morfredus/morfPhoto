@@ -57,6 +57,8 @@ public:
     QJsonArray  focals() const;
     QJsonArray  years() const;
     QJsonObject indexStatus() const;
+    // Export compact des photos presentes pour la couche d'analyse (morfAnalytics).
+    QJsonObject photoDataset() const;
 
     // --- Dossiers (thread principal) ---
     QJsonArray  listFolders() const;
@@ -88,6 +90,9 @@ private:
     QString     m_exiftoolBinary;
     bool        m_stayOpen = true;
     int         m_intervalMs = 300000;   // 5 min par défaut
+    // Délai borné des sondes d'accessibilité d'une racine (montages distants) :
+    // au-delà, la racine est déclarée indisponible plutôt que de rester figé.
+    int         m_probeTimeoutMs = 5000;
 
     // Prérequis ExifTool, sondé une fois au démarrage. Sans lui, les fichiers sont
     // indexés mais l'extraction EXIF échoue en silence : on le rend explicite.

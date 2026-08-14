@@ -8,6 +8,7 @@
 #include <QString>
 #include <QStringList>
 #include <QVector>
+#include <QSet>
 #include <QJsonObject>
 #include <QMutex>
 
@@ -24,6 +25,14 @@
 // Règle forte : UNE SEULE passe à la fois. L'indexeur porte le garde (verrou non
 // bloquant) et l'état observable (idle/indexing, début, dernière erreur). Si une
 // passe tourne déjà, run() renvoie -1 : jamais de file d'attente de rescans.
+//
+// Tolérance aux sources distantes : une racine réseau (SMB/CIFS, NFS...) peut
+// disparaître pendant une passe. Une racine indisponible ne doit JAMAIS être prise
+// pour une suppression de fichiers. L'indexeur sonde donc l'accessibilité de la
+// racine avant et après le scan (délai borné), n'applique un verdict de disparition
+// que sur un scan mené jusqu'au bout de façon fiable, et clôt alors la passe en
+// 'interrupted' plutôt qu'en 'done'. Générique à tout montage distant, sans code
+// spécifique à SMB.
 // -----------------------------------------------------------------------------
 namespace morfphoto {
 
@@ -38,7 +47,11 @@ inline QString indexModeName(IndexMode m) {
 
 class Indexer {
 public:
-    Indexer(PhotoRepository* repo, ExifExtractor* extractor, QStringList roots);
+    // `probeTimeoutMs` : délai maximal d'attente d'une sonde d'accessibilité de
+    // racine avant de la déclarer indisponible (borne le « ça a l'air figé » face à
+    // un montage réseau muet). Défaut 5 s ; <= 0 = attente illimitée (chemins locaux).
+    Indexer(PhotoRepository* repo, ExifExtractor* extractor, QStringList roots,
+            int probeTimeoutMs = 5000);
 
     // Lance une passe. Retourne l'identifiant de run, ou -1 si une passe tourne
     // déjà. `folderIds` vide = tous les dossiers actifs. `trigger` : watch|api|cli.
@@ -48,13 +61,18 @@ public:
     QJsonObject state() const;
 
 private:
-    void reconcileFolder(const FolderRow& folder, IndexMode mode, int runId,
-                         RunCounts& counts);
+    // Réconcilie une sélection. `unavailableRoots` : cache des racines déjà sondées
+    // indisponibles pendant CETTE passe (ne pas re-sonder, ne pas s'acharner sur la
+    // source). Retourne true si la racine de cette sélection était indisponible
+    // (avant ou pendant le scan) : la passe sera alors close en 'interrupted'.
+    bool reconcileFolder(const FolderRow& folder, IndexMode mode, int runId,
+                         RunCounts& counts, QSet<QString>& unavailableRoots);
     bool extract(int runId, const QString& path, RunCounts& counts, ExifData& out);
 
     PhotoRepository* m_repo;
     ExifExtractor*   m_extractor;
     QStringList      m_roots;
+    int              m_probeTimeoutMs;
 
     QMutex          m_runMutex;    // garde « une seule passe » (tryLock)
     mutable QMutex  m_stateMutex;  // protège l'état observable

@@ -3,6 +3,57 @@
 Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/)
 et du [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [0.5.0] - 2026-08-14
+
+### Ajouté
+
+- **`GET /api/v1/photos/dataset` : export compact pour la couche d'analyse.** morfPhoto
+  reste souverain sur ses données ; morfAnalytics doit pouvoir les rapatrier pour les
+  agréger, croiser et filtrer sans jamais lire les fichiers directement. Ce nouvel
+  endpoint renvoie les colonnes analytiques de **toutes les photos présentes**
+  (`taken_at`, boîtier, objectif, type, focale, focale 35 mm, ouverture, ISO, vitesse
+  en secondes, dossier) en **format colonnaire** avec **dictionnaires** pour les
+  chaînes répétées (boîtier/objectif/type) : une seule réponse légère même sur une
+  photothèque de 20 000+ images. Les valeurs restent **brutes** (aucun regroupement,
+  l'interprétation vit chez morfAnalytics) et les **NULL sont préservés** (une donnée
+  EXIF absente reste `null`, jamais un 0 trompeur : la couche d'analyse peut ainsi
+  montrer la qualité réelle des métadonnées). Changement strictement additif : le
+  protocole reste `morfphoto/1`.
+
+## [0.4.0] - 2026-08-14
+
+### Ajouté
+
+- **Tolérance à la disparition d'une source pendant l'indexation.** Une racine peut
+  être un montage réseau (SMB/CIFS, NFS...) valide au démarrage d'une passe mais qui
+  disparaît en cours de route (l'hôte du partage s'endort ; le noyau attend le timeout
+  CIFS, jusqu'à ~180 s, avant de retenter). Jusqu'ici ce cas corrompait la base : le
+  scan devenu partiel servait de référence et des fichiers **pourtant toujours présents**
+  étaient marqués disparus. Désormais morfPhoto **ne confond plus absence de source et
+  suppression de fichiers**.
+- **Sonde d'accessibilité bornée dans le temps** (`probeAccessible`) : le stat
+  potentiellement bloquant est déporté sur un thread ; au-delà du délai imparti, la
+  racine est jugée indisponible au lieu de laisser l'indexation rester figée le temps
+  du timeout du montage. Générique à tout montage distant, sans code spécifique à SMB.
+- **Verdict de disparition fiabilisé** : un fichier n'est marqué disparu **que si sa
+  racine a été parcourue entièrement ET répond toujours à la fin**. Un scan incomplet
+  (source perdue en cours) n'applique aucun retrait ; les fichiers déjà acquis restent
+  en base. La racine indisponible est journalisée (stage `availability`) et sa
+  sélection sautée sans s'acharner sur la source (une sonde par racine et par passe).
+- **État de passe `interrupted`** : `index_runs.state` vaut `interrupted` (au lieu de
+  `done`) dès qu'une racine a été indisponible. Exposé via `GET /api/v1/index/status`
+  (`last_run.state`, `last_run.files_unavailable`) et, en compact, dans `GET /status`
+  et `GET /modules` (`last_index_state`) : on distingue une indexation terminée
+  normalement d'une passe interrompue par une source injoignable.
+- **Schéma SQLite v3** : migration incrémentale (ajout de `index_runs.files_unavailable`),
+  appliquée automatiquement à l'ouverture d'une base v2. Le protocole API reste
+  `morfphoto/1` (changements strictement additifs).
+
+### Configuration
+
+- **`watch.availability_timeout_ms`** (défaut 5000) : délai borné des sondes
+  d'accessibilité d'une racine. Documenté dans `config/morfphoto.example.json`.
+
 ## [0.3.2] - 2026-08-14
 
 ### Corrigé

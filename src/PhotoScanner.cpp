@@ -11,6 +11,11 @@
 #include <QFileInfo>
 #include <QSet>
 
+#include <chrono>
+#include <future>
+#include <memory>
+#include <thread>
+
 namespace morfphoto {
 
 namespace {
@@ -71,12 +76,49 @@ bool isWithinRoots(const QString& candidate, const QStringList& roots) {
     return false;
 }
 
-QVector<FileInfo> scanFolder(const QString& folder, bool recursive) {
-    QVector<FileInfo> out;
+bool probeAccessible(const QString& path, int timeoutMs) {
+    // Le stat vit sur un thread détaché : c'est LUI qui peut rester bloqué le
+    // temps du timeout du montage réseau. La promesse est partagée par shared_ptr
+    // pour survivre au retour de cette fonction : quand l'appel finit enfin par
+    // revenir (déblocage tardif du montage), le thread écrit dans une promesse
+    // encore vivante, sans écrire dans une pile disparue.
+    auto promise = std::make_shared<std::promise<bool>>();
+    std::future<bool> fut = promise->get_future();
+    std::thread([promise, path]() {
+        // QFileInfo neuf à chaque appel (pas de cache) : force un vrai stat.
+        const QFileInfo fi(path);
+        promise->set_value(fi.exists() && fi.isDir());
+    }).detach();
+
+    if (timeoutMs <= 0)
+        return fut.get();
+    if (fut.wait_for(std::chrono::milliseconds(timeoutMs)) == std::future_status::ready)
+        return fut.get();
+    // Délai dépassé : la source ne répond pas assez vite, on la considère
+    // indisponible plutôt que de rester figé. Le thread détaché se terminera seul.
+    return false;
+}
+
+ScanResult scanFolder(const QString& folder, bool recursive,
+                      const std::function<bool()>& stillAvailable) {
+    // Intervalle de contrôle : consulter stillAvailable toutes les N entrées suffit
+    // à borner la réactivité sans transformer chaque fichier en sonde réseau.
+    constexpr int kCheckEvery = 256;
+
+    ScanResult res;
     const QDirIterator::IteratorFlags flags =
         recursive ? QDirIterator::Subdirectories : QDirIterator::NoIteratorFlags;
     QDirIterator it(folder, QDir::Files | QDir::NoDotAndDotDot, flags);
+    int since = 0;
     while (it.hasNext()) {
+        // Vérifier AVANT de toucher l'entrée suivante : si la source a disparu, on
+        // sort tout de suite, `completed` reste false, et le verdict de disparition
+        // sera écarté par l'appelant (jamais de markMissing sur un scan partiel).
+        if (stillAvailable && ++since >= kCheckEvery) {
+            since = 0;
+            if (!stillAvailable())
+                return res;   // completed == false
+        }
         it.next();
         const QFileInfo fi = it.fileInfo();
         const QString ext = QStringLiteral(".") + fi.suffix().toLower();
@@ -90,9 +132,11 @@ QVector<FileInfo> scanFolder(const QString& folder, bool recursive) {
         info.fileType  = fileTypeFor(ext);
         info.size      = fi.size();
         info.mtime     = fi.lastModified().toSecsSinceEpoch();
-        out.push_back(info);
+        res.files.push_back(info);
     }
-    return out;
+    // Arrivé au bout du parcours : le scan est fiable et complet.
+    res.completed = true;
+    return res;
 }
 
 } // namespace morfphoto

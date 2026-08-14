@@ -74,11 +74,12 @@ struct FolderRow {
 
 // Compteurs d'une passe de réconciliation, tenus à jour puis écrits dans index_runs.
 struct RunCounts {
-    int seen    = 0;
-    int created = 0;   // « new » (mot réservé en C++)
-    int updated = 0;
-    int missing = 0;
-    int errors  = 0;
+    int seen        = 0;
+    int created     = 0;   // « new » (mot réservé en C++)
+    int updated     = 0;
+    int missing     = 0;
+    int errors      = 0;
+    int unavailable = 0;   // sélections sautées car leur racine était indisponible
 };
 
 using KnownFiles = QHash<QString, KnownFile>;   // chemin complet -> état connu

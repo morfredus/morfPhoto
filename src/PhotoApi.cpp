@@ -96,6 +96,7 @@ PhotoApi::Result PhotoApi::handle(const QByteArray& method, const QString& path,
         }
         const QString& what = seg[1];
         if (what == QLatin1String("summary")) return ok(m_module->summary());
+        if (what == QLatin1String("dataset")) return ok(m_module->photoDataset());
         if (what == QLatin1String("cameras")) return items(m_module->cameras());
         if (what == QLatin1String("lenses"))  return items(m_module->lenses());
         if (what == QLatin1String("focals"))  return items(m_module->focals());

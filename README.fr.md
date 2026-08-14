@@ -2,7 +2,7 @@
 
 *Lire dans une autre langue : [English](README.md) · **Français** (ce document).*
 
-[![Version](https://img.shields.io/badge/version-0.3.2-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.5.0-blue)](CHANGELOG.md)
 ![C++](https://img.shields.io/badge/C%2B%2B-17-00599C?logo=cplusplus)
 ![Qt](https://img.shields.io/badge/Qt-6-41CD52?logo=qt)
 ![Build](https://img.shields.io/badge/CMake-3.21+-064F8C?logo=cmake)
@@ -33,6 +33,13 @@ distincte (morfAnalytics).
   Une seule passe à la fois - une demande concurrente est refusée, jamais empilée.
 - **Ne détruit jamais implicitement** : un fichier disparu est marqué absent ;
   retirer un dossier est un retrait doux qui conserve son historique.
+- **Tolère la disparition d'une source distante** : une racine peut être un montage
+  réseau (SMB/CIFS, NFS...) qui devient injoignable en pleine passe. morfPhoto ne
+  confond pas absence de source et suppression : il ne marque un fichier disparu que
+  si sa racine a été parcourue jusqu'au bout de façon fiable. Sinon la passe est
+  interrompue proprement (`last_run.state = interrupted`), les fichiers déjà indexés
+  restent acquis, et une passe ultérieure reprend au retour de la source. Le délai
+  des sondes d'accessibilité est réglable (`watch.availability_timeout_ms`).
 - **Expose une API HTTP stable** et s'annonce sur le réseau local avec morfBeacon
   et la capacité `photo_index`.
 

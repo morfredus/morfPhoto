@@ -2,7 +2,7 @@
 
 *Read in another language: **English** (this document) · [Français](README.fr.md).*
 
-[![Version](https://img.shields.io/badge/version-0.3.2-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.5.0-blue)](CHANGELOG.md)
 ![C++](https://img.shields.io/badge/C%2B%2B-17-00599C?logo=cplusplus)
 ![Qt](https://img.shields.io/badge/Qt-6-41CD52?logo=qt)
 ![Build](https://img.shields.io/badge/CMake-3.21+-064F8C?logo=cmake)
@@ -30,6 +30,13 @@ deduplication and interpretation belong to a separate layer (morfAnalytics).
   faithful. One pass at a time - a concurrent request is refused, never queued.
 - **Never destroys implicitly**: a vanished file is marked missing; removing a
   folder is a soft retire that preserves its history.
+- **Tolerates a disappearing remote source**: a root may be a network mount
+  (SMB/CIFS, NFS...) that becomes unreachable mid-pass. morfPhoto does not mistake an
+  absent source for deletion: a file is only marked missing when its root was scanned
+  to completion reliably. Otherwise the pass is cleanly interrupted
+  (`last_run.state = interrupted`), already-indexed files stay, and a later pass
+  resumes when the source returns. The accessibility-probe timeout is configurable
+  (`watch.availability_timeout_ms`).
 - **Serves a stable HTTP API** and announces itself on the LAN via morfBeacon with
   the `photo_index` capability.
 

@@ -24,8 +24,10 @@ QString nowIso() {
 }
 } // namespace
 
-Indexer::Indexer(PhotoRepository* repo, ExifExtractor* extractor, QStringList roots)
-    : m_repo(repo), m_extractor(extractor), m_roots(std::move(roots)) {}
+Indexer::Indexer(PhotoRepository* repo, ExifExtractor* extractor, QStringList roots,
+                 int probeTimeoutMs)
+    : m_repo(repo), m_extractor(extractor), m_roots(std::move(roots)),
+      m_probeTimeoutMs(probeTimeoutMs) {}
 
 int Indexer::run(IndexMode mode, const QVector<int>& folderIds, const QString& trigger) {
     // Verrou non bloquant : refuser tout de suite plutôt que d'empiler des passes.
@@ -51,10 +53,20 @@ int Indexer::run(IndexMode mode, const QVector<int>& folderIds, const QString& t
         folders = kept;
     }
 
+    // Racines constatées indisponibles pendant CETTE passe : une fois une racine KO,
+    // ses autres sélections sont sautées sans re-sonder (ne pas s'acharner sur une
+    // source muette : un timeout par racine, pas un par dossier).
+    QSet<QString> unavailableRoots;
+    bool interrupted = false;
     for (const FolderRow& folder : folders)
-        reconcileFolder(folder, mode, runId, counts);
+        if (reconcileFolder(folder, mode, runId, counts, unavailableRoots))
+            interrupted = true;
 
-    m_repo->finishRun(runId, QStringLiteral("done"), counts, nowIso());
+    // Une passe qui a perdu au moins une source n'est PAS une passe normale : le
+    // dire pour que /status distingue « terminée » de « interrompue ».
+    const QString finalState = interrupted ? QStringLiteral("interrupted")
+                                           : QStringLiteral("done");
+    m_repo->finishRun(runId, finalState, counts, nowIso());
 
     {
         QMutexLocker lock(&m_stateMutex);
@@ -65,21 +77,47 @@ int Indexer::run(IndexMode mode, const QVector<int>& folderIds, const QString& t
     return runId;
 }
 
-void Indexer::reconcileFolder(const FolderRow& folder, IndexMode mode, int runId,
-                              RunCounts& counts) {
+bool Indexer::reconcileFolder(const FolderRow& folder, IndexMode mode, int runId,
+                              RunCounts& counts, QSet<QString>& unavailableRoots) {
     // Garde-fou : la sélection doit rester sous sa propre racine autorisée.
     if (!isWithinRoots(folder.path, {folder.rootPath})) {
         m_repo->logError(runId, folder.path, QStringLiteral("scan"),
                          QStringLiteral("selection hors de sa racine autorisee, ignoree"),
                          nowIso());
         ++counts.errors;
-        return;
+        return false;
+    }
+
+    // Racine déjà déclarée indisponible plus tôt dans la passe : sauter tout de
+    // suite, sans nouvelle sonde (ne pas re-solliciter une source muette).
+    if (unavailableRoots.contains(folder.rootPath)) {
+        ++counts.unavailable;
+        return true;
+    }
+
+    // Sonde AVANT le scan : une racine réseau valide au dernier passage a pu
+    // disparaître entre-temps. Indisponible => on ne touche à RIEN (surtout pas de
+    // markMissing : une source absente n'est pas une suppression de fichiers).
+    if (!probeAccessible(folder.rootPath, m_probeTimeoutMs)) {
+        unavailableRoots.insert(folder.rootPath);
+        m_repo->logError(runId, folder.rootPath, QStringLiteral("availability"),
+                         QStringLiteral("racine indisponible au demarrage du scan "
+                                        "(source injoignable), selection ignoree"),
+                         nowIso());
+        ++counts.unavailable;
+        return true;
     }
 
     const KnownFiles known = m_repo->existingFilesInFolder(folder.id);
     QSet<QString> seen;
 
-    for (const FileInfo& info : scanFolder(folder.path, folder.recursive)) {
+    // Scan interruptible : la closure re-sonde la racine périodiquement. Si la
+    // source meurt en plein parcours, le scan s'arrête et signale l'incomplétude.
+    const ScanResult scan = scanFolder(
+        folder.path, folder.recursive,
+        [this, &folder]() { return probeAccessible(folder.rootPath, m_probeTimeoutMs); });
+
+    for (const FileInfo& info : scan.files) {
         // Défense en profondeur : ne jamais rien indexer hors des racines globales.
         if (!isWithinRoots(info.path, m_roots))
             continue;
@@ -102,7 +140,22 @@ void Indexer::reconcileFolder(const FolderRow& folder, IndexMode mode, int runId
         }
     }
 
-    // Disparus : connus, non revus, encore marqués présents.
+    // Point crucial : le verdict de disparition n'est FIABLE que si la racine a été
+    // parcourue entièrement ET qu'elle répond toujours à la fin. Un scan incomplet
+    // (source perdue en cours) ne sert jamais de référence : les fichiers déjà vus
+    // restent acquis, aucun n'est marqué disparu, la passe est interrompue.
+    if (!scan.completed || !probeAccessible(folder.rootPath, m_probeTimeoutMs)) {
+        unavailableRoots.insert(folder.rootPath);
+        m_repo->logError(runId, folder.rootPath, QStringLiteral("availability"),
+                         QStringLiteral("racine devenue indisponible pendant le scan : "
+                                        "reconciliation partielle, aucun fichier marque "
+                                        "disparu"),
+                         nowIso());
+        ++counts.unavailable;
+        return true;
+    }
+
+    // Disparus : connus, non revus, encore marqués présents. Sûr ici : scan complet.
     QVector<int> missingIds;
     for (auto it = known.constBegin(); it != known.constEnd(); ++it)
         if (!seen.contains(it.key()) && it->state != QLatin1String("missing"))
@@ -113,6 +166,7 @@ void Indexer::reconcileFolder(const FolderRow& folder, IndexMode mode, int runId
     }
 
     m_repo->setFolderScanned(folder.id, nowIso());
+    return false;
 }
 
 bool Indexer::extract(int runId, const QString& path, RunCounts& counts, ExifData& out) {

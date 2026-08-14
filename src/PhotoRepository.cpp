@@ -389,9 +389,10 @@ void PhotoRepository::finishRun(int runId, const QString& state, const RunCounts
     QSqlQuery q(db());
     run(q, QStringLiteral(
              "UPDATE index_runs SET finished_at = ?, state = ?, files_seen = ?, files_new = ?, "
-             "files_updated = ?, files_missing = ?, errors_count = ? WHERE id = ?"),
+             "files_updated = ?, files_missing = ?, files_unavailable = ?, errors_count = ? "
+             "WHERE id = ?"),
         {finishedAt, state, counts.seen, counts.created, counts.updated, counts.missing,
-         counts.errors, runId});
+         counts.unavailable, counts.errors, runId});
 }
 
 void PhotoRepository::logError(int runId, const QVariant& path, const QString& stage,
@@ -507,6 +508,65 @@ QJsonArray PhotoRepository::years() {
     while (q.next())
         arr.append(rowToJson(q));
     return arr;
+}
+
+QJsonObject PhotoRepository::photoDataset() {
+    // Dictionnaires : chaque chaine repetee (boitier, objectif, type) n'est stockee
+    // qu'une fois ; les colonnes ne portent que son index. Un QHash retient l'index
+    // deja attribue, un QJsonArray garde l'ordre d'apparition (l'index EST la position).
+    QJsonArray camDict, lensDict, typeDict;
+    QHash<QString, int> camIdx, lensIdx, typeIdx;
+    auto intern = [](const QVariant& v, QJsonArray& dict, QHash<QString, int>& idx) -> QJsonValue {
+        if (v.isNull())
+            return QJsonValue::Null;   // valeur absente preservee (jamais un index bidon)
+        const QString s = v.toString();
+        auto it = idx.constFind(s);
+        if (it != idx.constEnd())
+            return it.value();
+        const int n = dict.size();
+        dict.append(s);
+        idx.insert(s, n);
+        return n;
+    };
+    // Un reel brut, ou null si la colonne est NULL (pas de 0 trompeur).
+    auto num = [](const QVariant& v) -> QJsonValue {
+        return v.isNull() ? QJsonValue(QJsonValue::Null) : QJsonValue::fromVariant(v);
+    };
+
+    QJsonArray takenAt, camera, lens, fileType, focal, focal35, aperture, iso, shutterS, folder;
+    int count = 0;
+
+    QSqlQuery q(db());
+    // Un seul parcours des photos presentes ; ordre chronologique stable et utile.
+    q.exec(QStringLiteral(
+        "SELECT taken_at, camera_model, lens, file_type, focal_length, focal_length_35mm, "
+        "aperture, iso, shutter_speed_s, folder_id FROM files WHERE state='present' "
+        "ORDER BY taken_at IS NULL, taken_at, id"));
+    while (q.next()) {
+        takenAt.append(num(q.value(0)));
+        camera.append(intern(q.value(1), camDict, camIdx));
+        lens.append(intern(q.value(2), lensDict, lensIdx));
+        fileType.append(intern(q.value(3), typeDict, typeIdx));
+        focal.append(num(q.value(4)));
+        focal35.append(num(q.value(5)));
+        aperture.append(num(q.value(6)));
+        iso.append(num(q.value(7)));
+        shutterS.append(num(q.value(8)));
+        folder.append(num(q.value(9)));
+        ++count;
+    }
+
+    QJsonObject columns{
+        {"taken_at", takenAt}, {"camera", camera}, {"lens", lens}, {"file_type", fileType},
+        {"focal_length", focal}, {"focal_length_35mm", focal35}, {"aperture", aperture},
+        {"iso", iso}, {"shutter_speed_s", shutterS}, {"folder_id", folder},
+    };
+    QJsonObject dictionaries{
+        {"camera", camDict}, {"lens", lensDict}, {"file_type", typeDict},
+    };
+    return QJsonObject{
+        {"count", count}, {"dictionaries", dictionaries}, {"columns", columns},
+    };
 }
 
 QJsonObject PhotoRepository::latestRun(bool* found) {

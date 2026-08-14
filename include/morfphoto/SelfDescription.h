@@ -35,6 +35,7 @@ inline void fillAnnouncedDetail(morfbeacon::PresenceConfig& pc) {
         {QStringLiteral("GET"),    QStringLiteral("/api/v1/photos"),          QStringLiteral("liste paginee + filtree")},
         {QStringLiteral("GET"),    QStringLiteral("/api/v1/photos/{id}"),     QStringLiteral("fiche d'un fichier")},
         {QStringLiteral("GET"),    QStringLiteral("/api/v1/photos/summary"),  QStringLiteral("compteurs globaux")},
+        {QStringLiteral("GET"),    QStringLiteral("/api/v1/photos/dataset"),  QStringLiteral("export compact pour l'analyse")},
         {QStringLiteral("GET"),    QStringLiteral("/api/v1/photos/cameras"),  QStringLiteral("boitiers distincts")},
         {QStringLiteral("GET"),    QStringLiteral("/api/v1/photos/lenses"),   QStringLiteral("objectifs distincts")},
         {QStringLiteral("GET"),    QStringLiteral("/api/v1/photos/focals"),   QStringLiteral("focales brutes distinctes")},
