@@ -56,11 +56,22 @@ int Indexer::run(IndexMode mode, const QVector<int>& folderIds, const QString& t
     // Racines constatées indisponibles pendant CETTE passe : une fois une racine KO,
     // ses autres sélections sont sautées sans re-sonder (ne pas s'acharner sur une
     // source muette : un timeout par racine, pas un par dossier).
+    // Progression : le nombre de dossiers est le dénominateur fiable, connu ici.
+    m_pFoldersTotal = folders.size();
+    m_pFoldersDone  = 0;
+    m_pCurrentFolder.clear();
+    reportProgress(0);
+
     QSet<QString> unavailableRoots;
     bool interrupted = false;
-    for (const FolderRow& folder : folders)
+    for (const FolderRow& folder : folders) {
+        m_pCurrentFolder = folder.path;
+        reportProgress(counts.seen);            // dossier entamé
         if (reconcileFolder(folder, mode, runId, counts, unavailableRoots))
             interrupted = true;
+        ++m_pFoldersDone;
+        reportProgress(counts.seen);            // dossier terminé
+    }
 
     // Une passe qui a perdu au moins une source n'est PAS une passe normale : le
     // dire pour que /status distingue « terminée » de « interrompue ».
@@ -124,6 +135,11 @@ bool Indexer::reconcileFolder(const FolderRow& folder, IndexMode mode, int runId
         ++counts.seen;
         seen.insert(info.path);
 
+        // Un gros dossier ne doit pas figer la barre : on rafraîchit le compteur de
+        // fichiers toutes les 200 entrées (le total de dossiers, lui, ne bouge pas).
+        if (counts.seen % 200 == 0)
+            reportProgress(counts.seen);
+
         auto it = known.find(info.path);
         if (it == known.end()) {
             ExifData exif;
@@ -181,6 +197,11 @@ bool Indexer::extract(int runId, const QString& path, RunCounts& counts, ExifDat
         return false;
     }
     return true;
+}
+
+void Indexer::reportProgress(qint64 filesSeen) const {
+    if (m_progress)
+        m_progress(m_pFoldersDone, m_pFoldersTotal, filesSeen, m_pCurrentFolder);
 }
 
 QJsonObject Indexer::state() const {

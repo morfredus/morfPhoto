@@ -108,6 +108,13 @@ private:
     QString        m_lastError;
     int            m_passCounter = 0;
     QFuture<void>  m_pass;
+
+    // Progression de la passe en cours, alimentée par le callback de l'Indexer
+    // (thread de passe) et lue par observableState() (thread HTTP) : sous m_stateMutex.
+    int     m_progFoldersTotal = 0;
+    int     m_progFoldersDone  = 0;
+    qint64  m_progFilesSeen    = 0;
+    QString m_progCurrentFolder;
     bool           m_started = false;
 };
 

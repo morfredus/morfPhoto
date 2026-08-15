@@ -12,6 +12,8 @@
 #include <QJsonObject>
 #include <QMutex>
 
+#include <functional>
+
 #include "morfphoto/PhotoTypes.h"
 
 // -----------------------------------------------------------------------------
@@ -60,6 +62,16 @@ public:
     // État observable : { state: idle|indexing, started_at, last_error }.
     QJsonObject state() const;
 
+    // Suivi de progression d'une passe. Rappelée pendant `run()` : au démarrage, à
+    // chaque changement de dossier, et périodiquement pendant le scan d'un gros
+    // dossier. Le nombre total de dossiers est connu d'avance (dénominateur fiable) ;
+    // le nombre de fichiers vus est un compteur cumulé (pas de total pré-compté, on
+    // ne parcourt qu'une fois). Le callback est invoqué DANS le thread de la passe :
+    // à son destinataire de faire le passage de thread s'il le faut.
+    using ProgressFn = std::function<void(int foldersDone, int foldersTotal,
+                                          qint64 filesSeen, const QString& currentFolder)>;
+    void setProgressCallback(ProgressFn cb) { m_progress = std::move(cb); }
+
 private:
     // Réconcilie une sélection. `unavailableRoots` : cache des racines déjà sondées
     // indisponibles pendant CETTE passe (ne pas re-sonder, ne pas s'acharner sur la
@@ -68,6 +80,10 @@ private:
     bool reconcileFolder(const FolderRow& folder, IndexMode mode, int runId,
                          RunCounts& counts, QSet<QString>& unavailableRoots);
     bool extract(int runId, const QString& path, RunCounts& counts, ExifData& out);
+
+    // Émet la progression courante vers le callback (si défini). Le contexte de
+    // dossier (m_p*) n'est écrit et lu que dans le thread de la passe : pas de verrou.
+    void reportProgress(qint64 filesSeen) const;
 
     PhotoRepository* m_repo;
     ExifExtractor*   m_extractor;
@@ -79,6 +95,12 @@ private:
     bool            m_indexing = false;
     QString         m_startedAt;
     QString         m_lastError;
+
+    // Contexte de progression de la passe en cours (thread de passe uniquement).
+    ProgressFn m_progress;
+    int        m_pFoldersTotal = 0;
+    int        m_pFoldersDone  = 0;
+    QString    m_pCurrentFolder;
 };
 
 } // namespace morfphoto

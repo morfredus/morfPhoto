@@ -3,6 +3,17 @@
 Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/)
 et du [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [0.5.3] - 2026-08-15
+
+### Ajouté
+
+- **Progression d'indexation exposée dans `/api/v1/index/status`.** Pendant une passe,
+  l'état observable porte un objet `progress` : `folders_total` (dénominateur fiable,
+  connu d'avance), `folders_done`, `files_seen` (compteur cumulé) et `current_folder`.
+  L'`Indexer` publie son avancée via un callback (au démarrage, à chaque dossier, et
+  toutes les 200 entrées d'un gros dossier) ; `PhotoModule` la recopie sous verrou pour
+  le thread HTTP. De quoi matérialiser une vraie barre de progression côté PhotoHub.
+
 ## [0.5.2] - 2026-08-14
 
 ### Corrigé

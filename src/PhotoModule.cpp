@@ -136,6 +136,12 @@ QJsonObject PhotoModule::triggerIndex(IndexMode mode, const QVector<int>& folder
         m_indexing  = true;
         m_startedAt = nowIso();
         m_lastError.clear();
+        // Repartir d'une progression vierge : l'ancienne passe ne doit pas laisser
+        // de compteurs résiduels visibles au tout début de la nouvelle.
+        m_progFoldersTotal = 0;
+        m_progFoldersDone  = 0;
+        m_progFilesSeen    = 0;
+        m_progCurrentFolder.clear();
     }
 
     m_pass = QtConcurrent::run([this, mode, folderIds, trigger]() {
@@ -162,6 +168,16 @@ void PhotoModule::doPass(IndexMode mode, QVector<int> folderIds, QString trigger
             ExifExtractor extractor(m_exiftoolBinary, m_stayOpen);
             extractor.open();
             Indexer indexer(&repo, &extractor, m_roots, m_probeTimeoutMs);
+            // Relais de progression : l'Indexer rappelle depuis CE thread ; on recopie
+            // sous verrou dans les membres lus par observableState() (thread HTTP).
+            indexer.setProgressCallback([this](int done, int total, qint64 seen,
+                                               const QString& folder) {
+                QMutexLocker lock(&m_stateMutex);
+                m_progFoldersDone  = done;
+                m_progFoldersTotal = total;
+                m_progFilesSeen    = seen;
+                m_progCurrentFolder = folder;
+            });
             indexer.run(mode, folderIds, trigger);
             extractor.close();
             const QJsonObject st = indexer.state();
@@ -181,6 +197,20 @@ QJsonObject PhotoModule::observableState() const {
     QJsonObject o;
     o["state"]      = m_indexing ? QStringLiteral("indexing") : QStringLiteral("idle");
     o["started_at"] = m_indexing ? QJsonValue(m_startedAt) : QJsonValue(QJsonValue::Null);
+
+    // Progression de la passe en cours : le total de dossiers est un dénominateur
+    // fiable (une barre déterminée), le compteur de fichiers montre l'avancée dans un
+    // gros dossier. current_folder null si la passe vient juste de démarrer.
+    if (m_indexing) {
+        QJsonObject prog;
+        prog["folders_total"]  = m_progFoldersTotal;
+        prog["folders_done"]   = m_progFoldersDone;
+        prog["files_seen"]     = static_cast<double>(m_progFilesSeen);
+        prog["current_folder"] = m_progCurrentFolder.isEmpty()
+                                     ? QJsonValue(QJsonValue::Null)
+                                     : QJsonValue(m_progCurrentFolder);
+        o["progress"] = prog;
+    }
 
     // État du prérequis ExifTool. Un binaire absent ne fait pas tomber le service
     // (les fichiers sont indexés), mais laisse les métadonnées vides : le dire ici
