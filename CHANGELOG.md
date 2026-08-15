@@ -3,6 +3,19 @@
 Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/)
 et du [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [0.5.6] - 2026-08-15
+
+### Ajouté
+
+- **Script `scripts/linux/deploy-config.sh`** (il manquait, alors que morfMonitor
+  l'avait). Il copie `config/morfphoto.json` (ou l'exemple à défaut) vers
+  `/etc/morfsystem/morfphoto/morfphoto.json`, en **sauvegardant** l'ancien fichier
+  (`.bak-<date>`) et en **affichant le diff** appliqué, puis redémarre le service.
+  Contrairement à `service.py update` (qui n'ajoute que les clés manquantes), il
+  **remplace** la valeur déployée — c'est la bonne commande après avoir changé une
+  racine ou `watch.interval_ms`. Options `--no-restart`, `--if-absent`, `--help` ;
+  testable sans root via `MORF_SUDO`/`MORF_CONFIG_DIR`.
+
 ## [0.5.5] - 2026-08-15
 
 ### Modifié

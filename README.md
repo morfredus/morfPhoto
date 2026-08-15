@@ -2,7 +2,7 @@
 
 *Read in another language: **English** (this document) · [Français](README.fr.md).*
 
-[![Version](https://img.shields.io/badge/version-0.5.5-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.5.6-blue)](CHANGELOG.md)
 ![C++](https://img.shields.io/badge/C%2B%2B-17-00599C?logo=cplusplus)
 ![Qt](https://img.shields.io/badge/Qt-6-41CD52?logo=qt)
 ![Build](https://img.shields.io/badge/CMake-3.21+-064F8C?logo=cmake)
@@ -107,6 +107,17 @@ sudo ./service.py uninstall    # deregister, keeping your configuration
 
 Deployment is vendored under `third_party/morf/morfdeploy`; resynchronise the
 vendored copies with `scripts/sync-morf.sh`.
+
+To **redeploy the configuration** to `/etc/morfsystem/morfphoto/` after editing it
+(a root, `watch.interval_ms`, ExifTool path...), without a full rebuild:
+
+```sh
+./scripts/linux/deploy-config.sh          # backs up, shows the diff, then restarts
+```
+
+Unlike `service.py update` (which only adds missing keys, never overwrites), this
+replaces the deployed file with the one from the repo - keep a real
+`config/morfphoto.json` in your clone, with your roots, as the deployed reference.
 
 ## License
 
