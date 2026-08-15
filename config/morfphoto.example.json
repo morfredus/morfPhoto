@@ -25,8 +25,8 @@
         "/srv/archives-photo"
       ],
       "watch": {
-        "_comment": "Cadence de la reconciliation periodique (surveillance continue). 'availability_timeout_ms' : delai borne des sondes d'accessibilite d'une racine avant de la declarer indisponible (tolerance aux montages distants type SMB/CIFS ou NFS). Au-dela, la racine est jugee injoignable et la passe est interrompue proprement -- sans marquer les fichiers comme disparus -- au lieu de rester figee le temps du timeout du montage (jusqu'a ~180 s en CIFS). Defaut 5000.",
-        "interval_ms": 300000,
+        "_comment": "'interval_ms' : cadence de la reconciliation automatique. Une passe re-parcourt et 'stat' tout l'arbre des dossiers surveilles (plus une sonde par racine) : trop frequente, elle met une pression permanente sur la machine, surtout sur des montages reseau. Defaut 86400000 (une fois par jour). Mettre 0 (ou une valeur negative) DESACTIVE l'automatique : plus aucune passe de fond, tout se fait a la demande (API POST /api/v1/index ou bouton PhotoHub). 'availability_timeout_ms' : delai borne des sondes d'accessibilite d'une racine avant de la declarer indisponible (tolerance aux montages distants type SMB/CIFS ou NFS). Au-dela, la racine est jugee injoignable et la passe est interrompue proprement -- sans marquer les fichiers comme disparus -- au lieu de rester figee le temps du timeout du montage (jusqu'a ~180 s en CIFS). Defaut 5000.",
+        "interval_ms": 86400000,
         "availability_timeout_ms": 5000
       },
       "exiftool": {

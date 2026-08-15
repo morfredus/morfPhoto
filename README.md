@@ -2,7 +2,7 @@
 
 *Read in another language: **English** (this document) · [Français](README.fr.md).*
 
-[![Version](https://img.shields.io/badge/version-0.5.3-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.5.4-blue)](CHANGELOG.md)
 ![C++](https://img.shields.io/badge/C%2B%2B-17-00599C?logo=cplusplus)
 ![Qt](https://img.shields.io/badge/Qt-6-41CD52?logo=qt)
 ![Build](https://img.shields.io/badge/CMake-3.21+-064F8C?logo=cmake)
@@ -26,8 +26,10 @@ deduplication and interpretation belong to a separate layer (morfAnalytics).
 - **Extracts EXIF via ExifTool** (`QProcess`, persistent `-stay_open` mode) and
   stores values **raw**: 49, 50 and 51 mm stay 49, 50 and 51; a RAW and its JPEG
   are two distinct rows. Shutter speed is kept both as `1/250` and in seconds.
-- **Watches continuously**: a periodic reconciliation pass keeps the database
-  faithful. One pass at a time - a concurrent request is refused, never queued.
+- **Watches on a schedule**: a periodic reconciliation pass keeps the database
+  faithful; the cadence is configurable (`watch.interval_ms`, once a day by default)
+  and can be disabled entirely (`0`) to index only on demand. One pass at a time - a
+  concurrent request is refused, never queued.
 - **Never destroys implicitly**: a vanished file is marked missing; removing a
   folder is a soft retire that preserves its history.
 - **Tolerates a disappearing remote source**: a root may be a network mount

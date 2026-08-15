@@ -3,6 +3,26 @@
 Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/)
 et du [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [0.5.4] - 2026-08-15
+
+### Modifié
+
+- **Cadence de l'indexation automatique bien moins agressive.** Le défaut passe de
+  **5 minutes à une fois par jour** (`watch.interval_ms` : 300000 -> 86400000). Une
+  passe re-parcourt et `stat` tout l'arbre surveillé plus une sonde par racine :
+  toutes les 5 minutes, cela mettait une pression de fond permanente sur la machine,
+  surtout sur des montages réseau. L'indexation à la demande (bouton PhotoHub /
+  `POST /api/v1/index`) reste évidemment disponible pour prendre les ajouts tout de suite.
+
+### Ajouté
+
+- **Désactivation complète de l'automatique** : `watch.interval_ms` à `0` (ou négatif)
+  supprime toute passe de fond — plus de passe périodique ni de passe au démarrage. La
+  base n'évolue alors que sur demande explicite. Corrige aussi un piège : `0` faisait
+  auparavant tourner le timer en continu.
+- **Cadence exposée dans `/api/v1/index/status`** : objet `watch` `{auto, interval_ms}`,
+  pour savoir côté client si une passe de fond tourne et à quelle fréquence.
+
 ## [0.5.3] - 2026-08-15
 
 ### Ajouté

@@ -2,7 +2,7 @@
 
 *Lire dans une autre langue : [English](README.md) · **Français** (ce document).*
 
-[![Version](https://img.shields.io/badge/version-0.5.3-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.5.4-blue)](CHANGELOG.md)
 ![C++](https://img.shields.io/badge/C%2B%2B-17-00599C?logo=cplusplus)
 ![Qt](https://img.shields.io/badge/Qt-6-41CD52?logo=qt)
 ![Build](https://img.shields.io/badge/CMake-3.21+-064F8C?logo=cmake)
@@ -29,8 +29,10 @@ distincte (morfAnalytics).
   stocke les valeurs **brutes** : 49, 50 et 51 mm restent 49, 50 et 51 ; un RAW et
   son JPEG sont deux lignes distinctes. La vitesse est gardée en `1/250` et en
   secondes.
-- **Surveille en continu** : une réconciliation périodique garde la base fidèle.
-  Une seule passe à la fois - une demande concurrente est refusée, jamais empilée.
+- **Surveille à cadence réglable** : une réconciliation périodique garde la base
+  fidèle ; la cadence est configurable (`watch.interval_ms`, une fois par jour par
+  défaut) et peut être désactivée (`0`) pour n'indexer qu'à la demande. Une seule
+  passe à la fois - une demande concurrente est refusée, jamais empilée.
 - **Ne détruit jamais implicitement** : un fichier disparu est marqué absent ;
   retirer un dossier est un retrait doux qui conserve son historique.
 - **Tolère la disparition d'une source distante** : une racine peut être un montage

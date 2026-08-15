@@ -87,16 +87,22 @@ bool PhotoModule::start() {
         m_exiftoolDetail = detail;
     }
 
-    // Surveillance périodique : réconciliation incrémentale à cadence fixe.
-    m_watchTimer = new QTimer(this);
-    m_watchTimer->setInterval(m_intervalMs);
-    connect(m_watchTimer, &QTimer::timeout, this, [this]() {
-        triggerIndex(IndexMode::Incremental, {}, QStringLiteral("watch"));
-    });
-    m_watchTimer->start();
+    // Surveillance périodique : réconciliation incrémentale à cadence fixe. Une
+    // cadence <= 0 désactive complètement l'automatique : aucune passe périodique,
+    // aucune passe au démarrage. La base n'évolue plus alors que sur demande
+    // explicite (API /index ou bouton PhotoHub) — utile pour ne mettre AUCUNE
+    // pression de fond sur une machine modeste ou une source réseau.
+    if (m_intervalMs > 0) {
+        m_watchTimer = new QTimer(this);
+        m_watchTimer->setInterval(m_intervalMs);
+        connect(m_watchTimer, &QTimer::timeout, this, [this]() {
+            triggerIndex(IndexMode::Incremental, {}, QStringLiteral("watch"));
+        });
+        m_watchTimer->start();
 
-    // Première passe dès le démarrage, pour rendre la base cohérente tout de suite.
-    triggerIndex(IndexMode::Incremental, {}, QStringLiteral("watch"));
+        // Première passe dès le démarrage, pour rendre la base cohérente tout de suite.
+        triggerIndex(IndexMode::Incremental, {}, QStringLiteral("watch"));
+    }
 
     m_started = true;
     return true;
@@ -211,6 +217,14 @@ QJsonObject PhotoModule::observableState() const {
                                      : QJsonValue(m_progCurrentFolder);
         o["progress"] = prog;
     }
+
+    // Cadence de l'indexation automatique : de quoi savoir, côté client, si une
+    // passe de fond tourne et à quelle fréquence (ou si tout est à la demande).
+    // m_intervalMs est fixé à la construction et ne change plus : lecture sûre.
+    QJsonObject watch;
+    watch["auto"]        = (m_intervalMs > 0);
+    watch["interval_ms"] = m_intervalMs;
+    o["watch"] = watch;
 
     // État du prérequis ExifTool. Un binaire absent ne fait pas tomber le service
     // (les fichiers sont indexés), mais laisse les métadonnées vides : le dire ici
