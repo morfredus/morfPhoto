@@ -2,7 +2,7 @@
 
 *Lire dans une autre langue : [English](README.md) · **Français** (ce document).*
 
-[![Version](https://img.shields.io/badge/version-0.5.4-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.5.5-blue)](CHANGELOG.md)
 ![C++](https://img.shields.io/badge/C%2B%2B-17-00599C?logo=cplusplus)
 ![Qt](https://img.shields.io/badge/Qt-6-41CD52?logo=qt)
 ![Build](https://img.shields.io/badge/CMake-3.21+-064F8C?logo=cmake)
@@ -12,13 +12,13 @@
 dossiers photo surveillés.** C'est le propriétaire unique des métadonnées photo
 dans l'écosystème morfSystem.
 
-C'est un **service permanent**, pas un importateur qu'on lance quand on y pense.
-Tant qu'il tourne, il surveille les dossiers configurés, repère les fichiers
-nouveaux, modifiés ou disparus, extrait leurs métadonnées avec ExifTool et tient
-une base SQLite à jour, sans intervention. La base n'est pas un export des
-dossiers : elle en est la représentation. morfPhoto ne produit **aucune analyse
-métier** - regroupement, déduplication et interprétation vivent dans une couche
-distincte (morfAnalytics).
+C'est un **service permanent** : tant qu'il tourne, il est le propriétaire des
+métadonnées photo et les sert en HTTP. Il réconcilie les dossiers configurés - repère
+les fichiers nouveaux, modifiés ou disparus, extrait leurs métadonnées avec ExifTool -
+**à la demande par défaut**, ou selon une cadence périodique quand `watch.interval_ms`
+en définit une. La base n'est pas un export des dossiers : elle en est la
+représentation. morfPhoto ne produit **aucune analyse métier** - regroupement,
+déduplication et interprétation vivent dans une couche distincte (morfAnalytics).
 
 ## Ce qu'il fait
 
@@ -29,10 +29,12 @@ distincte (morfAnalytics).
   stocke les valeurs **brutes** : 49, 50 et 51 mm restent 49, 50 et 51 ; un RAW et
   son JPEG sont deux lignes distinctes. La vitesse est gardée en `1/250` et en
   secondes.
-- **Surveille à cadence réglable** : une réconciliation périodique garde la base
-  fidèle ; la cadence est configurable (`watch.interval_ms`, une fois par jour par
-  défaut) et peut être désactivée (`0`) pour n'indexer qu'à la demande. Une seule
-  passe à la fois - une demande concurrente est refusée, jamais empilée.
+- **Indexe à la demande par défaut** : `watch.interval_ms` vaut `0` par défaut, donc
+  aucune passe de fond - la base n'est mise à jour que sur demande (bouton PhotoHub ou
+  `POST /api/v1/index`), sans aucune pression de fond sur la machine. Mettre une cadence
+  positive (ex. `86400000`, une fois par jour) pour réactiver une réconciliation
+  périodique. Une seule passe à la fois - une demande concurrente est refusée, jamais
+  empilée.
 - **Ne détruit jamais implicitement** : un fichier disparu est marqué absent ;
   retirer un dossier est un retrait doux qui conserve son historique.
 - **Tolère la disparition d'une source distante** : une racine peut être un montage

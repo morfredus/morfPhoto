@@ -2,7 +2,7 @@
 
 *Read in another language: **English** (this document) · [Français](README.fr.md).*
 
-[![Version](https://img.shields.io/badge/version-0.5.4-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.5.5-blue)](CHANGELOG.md)
 ![C++](https://img.shields.io/badge/C%2B%2B-17-00599C?logo=cplusplus)
 ![Qt](https://img.shields.io/badge/Qt-6-41CD52?logo=qt)
 ![Build](https://img.shields.io/badge/CMake-3.21+-064F8C?logo=cmake)
@@ -12,12 +12,13 @@
 watched photo folders.** It is the single source of truth for photo metadata in the
 morfSystem ecosystem.
 
-It is a **permanent service**, not an on-demand importer. As long as it runs, it
-watches the configured folders, detects new, modified and missing files, extracts
-their metadata with ExifTool and keeps a local SQLite database in sync, without any
-user action. The database is not an export of the folders: it is their
-representation. morfPhoto produces **no business analysis** - grouping,
-deduplication and interpretation belong to a separate layer (morfAnalytics).
+It is a **permanent service**: as long as it runs it owns the photo metadata and
+serves it over HTTP. It reconciles the configured folders - detecting new, modified
+and missing files and extracting their metadata with ExifTool - **on demand by
+default**, or on a periodic schedule when `watch.interval_ms` sets one. The database
+is not an export of the folders: it is their representation. morfPhoto produces **no
+business analysis** - grouping, deduplication and interpretation belong to a separate
+layer (morfAnalytics).
 
 ## What it does
 
@@ -26,10 +27,11 @@ deduplication and interpretation belong to a separate layer (morfAnalytics).
 - **Extracts EXIF via ExifTool** (`QProcess`, persistent `-stay_open` mode) and
   stores values **raw**: 49, 50 and 51 mm stay 49, 50 and 51; a RAW and its JPEG
   are two distinct rows. Shutter speed is kept both as `1/250` and in seconds.
-- **Watches on a schedule**: a periodic reconciliation pass keeps the database
-  faithful; the cadence is configurable (`watch.interval_ms`, once a day by default)
-  and can be disabled entirely (`0`) to index only on demand. One pass at a time - a
-  concurrent request is refused, never queued.
+- **Indexes on demand by default**: `watch.interval_ms` defaults to `0`, meaning no
+  background pass runs - the database updates only when asked (PhotoHub button or
+  `POST /api/v1/index`), for zero background pressure on the machine. Set a positive
+  cadence (e.g. `86400000`, once a day) to also run a periodic reconciliation. One
+  pass at a time - a concurrent request is refused, never queued.
 - **Never destroys implicitly**: a vanished file is marked missing; removing a
   folder is a soft retire that preserves its history.
 - **Tolerates a disappearing remote source**: a root may be a network mount

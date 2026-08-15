@@ -3,6 +3,17 @@
 Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/)
 et du [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [0.5.5] - 2026-08-15
+
+### Modifié
+
+- **Indexation à la demande par défaut.** Le défaut de `watch.interval_ms` passe de
+  86400000 (une fois par jour) à **`0`** : plus aucune passe automatique, ni périodique
+  ni au démarrage. L'indexation ne se fait plus que sur demande explicite (bouton
+  PhotoHub ou `POST /api/v1/index`) — aucune pression de fond sur la machine. Une cadence
+  périodique reste possible en mettant une valeur positive. Exemple de config et README
+  (FR + EN) alignés.
+
 ## [0.5.4] - 2026-08-15
 
 ### Modifié

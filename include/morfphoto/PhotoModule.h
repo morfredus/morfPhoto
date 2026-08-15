@@ -89,12 +89,13 @@ private:
     QStringList m_roots;
     QString     m_exiftoolBinary;
     bool        m_stayOpen = true;
-    // Cadence de la réconciliation automatique. Défaut : une fois par jour. Une
-    // passe re-parcourt et `stat` tout l'arbre des dossiers surveillés (plus une
-    // sonde par racine) : trop fréquente, elle met une pression permanente sur la
-    // machine, surtout sur des montages réseau. 0 ou négatif => passe automatique
-    // DÉSACTIVÉE (tout se fait alors à la demande via l'API / le bouton PhotoHub).
-    int         m_intervalMs = 86400000;   // 24 h par défaut
+    // Cadence de la réconciliation automatique. Défaut : 0 => passe automatique
+    // DÉSACTIVÉE, indexation UNIQUEMENT à la demande (API /index ou bouton PhotoHub).
+    // C'est le mode qui ne met AUCUNE pression de fond sur la machine — le choix par
+    // défaut. Une valeur positive réactive une passe périodique (ex. 86400000 = une
+    // fois par jour) ; attention, une passe re-parcourt et `stat` tout l'arbre
+    // surveillé plus une sonde par racine, coûteux surtout sur un montage réseau.
+    int         m_intervalMs = 0;   // 0 = à la demande uniquement (défaut)
     // Délai borné des sondes d'accessibilité d'une racine (montages distants) :
     // au-delà, la racine est déclarée indisponible plutôt que de rester figé.
     int         m_probeTimeoutMs = 5000;
