@@ -2,7 +2,7 @@
 
 *Lire dans une autre langue : [English](README.md) · **Français** (ce document).*
 
-[![Version](https://img.shields.io/badge/version-0.5.7-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.6.0-blue)](CHANGELOG.md)
 ![C++](https://img.shields.io/badge/C%2B%2B-17-00599C?logo=cplusplus)
 ![Qt](https://img.shields.io/badge/Qt-6-41CD52?logo=qt)
 ![Build](https://img.shields.io/badge/CMake-3.21+-064F8C?logo=cmake)
@@ -36,7 +36,16 @@ déduplication et interprétation vivent dans une couche distincte (morfAnalytic
   périodique. Une seule passe à la fois - une demande concurrente est refusée, jamais
   empilée.
 - **Ne détruit jamais implicitement** : un fichier disparu est marqué absent ;
-  retirer un dossier est un retrait doux qui conserve son historique.
+  retirer un dossier est un retrait doux qui conserve son historique. La suppression
+  définitive existe (`POST /api/v1/purge`, par dossier, année, boîtier ou totale),
+  mais elle reste un geste **explicite** et confirmé, jamais automatique.
+- **Gère les supports amovibles** (CD/DVD, disques d'archive). Une sélection déclarée
+  amovible n'a **jamais** ses photos marquées disparues quand le support est absent -
+  même si le point de montage est resté présent mais vide (le piège d'un CD éjecté).
+  Les photos gravées restent donc dans la base et dans morfAnalytics, support retiré et
+  après un redémarrage. Un nom de volume optionnel aide à reconnaître le disque.
+- **Sépare l'analyse de la conservation** : une sélection peut être sortie des analyses
+  (`analytics_excluded`) sans que ses données soient effacées - réversible à tout moment.
 - **Tolère la disparition d'une source distante** : une racine peut être un montage
   réseau (SMB/CIFS, NFS...) qui devient injoignable en pleine passe. morfPhoto ne
   confond pas absence de source et suppression : il ne marque un fichier disparu que
@@ -59,9 +68,10 @@ GET  /api/v1/photos/cameras|lenses|focals|years
 POST /api/v1/index               déclenche une passe (async) : {"mode":"incremental|full"}
 GET  /api/v1/index/status        état d'indexation + dernière passe
 GET  /api/v1/folders             sélections surveillées
-POST /api/v1/folders             déclare une sélection (403 hors d'une racine autorisée)
-PATCH  /api/v1/folders/{id}      active / désactive
+POST /api/v1/folders             déclare une sélection (403 hors d'une racine autorisée) ; champs optionnels removable, volume_label
+PATCH  /api/v1/folders/{id}      modifie enabled, removable, volume_label, analytics_excluded (sous-ensemble libre)
 DELETE /api/v1/folders/{id}      retrait doux (historique conservé)
+POST /api/v1/purge               suppression DÉFINITIVE : {"scope":"folder|year|camera|all","value":...}
 ```
 
 Les racines autorisées sont déclarées dans la configuration ; les sélections

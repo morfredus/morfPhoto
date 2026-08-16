@@ -171,14 +171,24 @@ bool Indexer::reconcileFolder(const FolderRow& folder, IndexMode mode, int runId
         return true;
     }
 
-    // Disparus : connus, non revus, encore marqués présents. Sûr ici : scan complet.
-    QVector<int> missingIds;
-    for (auto it = known.constBegin(); it != known.constEnd(); ++it)
-        if (!seen.contains(it.key()) && it->state != QLatin1String("missing"))
-            missingIds.push_back(it->id);
-    if (!missingIds.isEmpty()) {
-        m_repo->markMissing(missingIds, nowIso());
-        counts.missing += missingIds.size();
+    // Support amovible (CD/DVD, disque d'archive) : l'absence est NORMALE. Même un
+    // scan mené jusqu'au bout ne vaut jamais suppression ici — un disque éjecté (ou
+    // remplacé par un autre) monté sur un point resté présent mais vide renverrait
+    // sinon « 0 fichier vu » et ferait marquer disparue toute l'archive, qui
+    // sortirait alors de morfAnalytics. On ne marque donc JAMAIS disparu un fichier
+    // d'un dossier amovible : ses photos restent acquises, support présent ou non
+    // (seul un retrait volontaire les sort de l'analyse). Les neufs/modifiés ont déjà
+    // été pris en compte plus haut quand le support est là.
+    if (!folder.removable) {
+        // Disparus : connus, non revus, encore marqués présents. Sûr ici : scan complet.
+        QVector<int> missingIds;
+        for (auto it = known.constBegin(); it != known.constEnd(); ++it)
+            if (!seen.contains(it.key()) && it->state != QLatin1String("missing"))
+                missingIds.push_back(it->id);
+        if (!missingIds.isEmpty()) {
+            m_repo->markMissing(missingIds, nowIso());
+            counts.missing += missingIds.size();
+        }
     }
 
     m_repo->setFolderScanned(folder.id, nowIso());

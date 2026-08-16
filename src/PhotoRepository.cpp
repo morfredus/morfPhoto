@@ -69,6 +69,17 @@ QVariant rawExifVariant(const ExifData& exif) {
     return QString::fromUtf8(QJsonDocument(exif.raw).toJson(QJsonDocument::Compact));
 }
 
+// Fragment SQL : photos ÉLIGIBLES AUX ANALYSES = présentes ET hors d'un dossier
+// sorti des analyses (analytics_excluded). Une archive amovible reste « présente »
+// support éjecté (jamais marquée disparue), donc analysée par défaut ; l'utilisateur
+// peut la sortir explicitement des analyses sans effacer ses données. Chaîne fixe
+// interne, jamais construite depuis une entrée client : aucune injection possible.
+QString analyzablePredicate() {
+    return QStringLiteral(
+        "state = 'present' AND folder_id NOT IN "
+        "(SELECT id FROM folders WHERE analytics_excluded = 1)");
+}
+
 // Traduction filtre public -> colonne SQL. Liste blanche : aucune autre clé
 // n'atteint le SQL, pas d'injection possible par un nom de champ.
 QString filterColumn(const QString& key) {
@@ -185,13 +196,13 @@ bool PhotoRepository::applyMigrations() {
 // --- Dossiers ---------------------------------------------------------------
 
 int PhotoRepository::addFolder(const QString& path, const QString& rootPath,
-                               const QVariant& label, bool recursive,
-                               const QString& addedAt) {
+                               const QVariant& label, bool recursive, bool removable,
+                               const QVariant& volumeLabel, const QString& addedAt) {
     QSqlQuery q(db());
     if (!run(q, QStringLiteral(
-                 "INSERT INTO folders (path, root_path, label, recursive, added_at) "
-                 "VALUES (?, ?, ?, ?, ?)"),
-             {path, rootPath, label, recursive ? 1 : 0, addedAt}))
+                 "INSERT INTO folders (path, root_path, label, recursive, removable, "
+                 "volume_label, added_at) VALUES (?, ?, ?, ?, ?, ?, ?)"),
+             {path, rootPath, label, recursive ? 1 : 0, removable ? 1 : 0, volumeLabel, addedAt}))
         return -1;
     return q.lastInsertId().toInt();
 }
@@ -199,21 +210,21 @@ int PhotoRepository::addFolder(const QString& path, const QString& rootPath,
 QVector<FolderRow> PhotoRepository::activeFolders() {
     QVector<FolderRow> out;
     QSqlQuery q(db());
-    q.exec(QStringLiteral("SELECT id, path, root_path, recursive, enabled "
+    q.exec(QStringLiteral("SELECT id, path, root_path, recursive, enabled, removable "
                           "FROM folders WHERE enabled = 1 AND deleted_at IS NULL"));
     while (q.next())
         out.push_back({q.value(0).toInt(), q.value(1).toString(), q.value(2).toString(),
-                       q.value(3).toBool(), q.value(4).toBool()});
+                       q.value(3).toBool(), q.value(4).toBool(), q.value(5).toBool()});
     return out;
 }
 
 QVector<FolderRow> PhotoRepository::allFolders() {
     QVector<FolderRow> out;
     QSqlQuery q(db());
-    q.exec(QStringLiteral("SELECT id, path, root_path, recursive, enabled FROM folders"));
+    q.exec(QStringLiteral("SELECT id, path, root_path, recursive, enabled, removable FROM folders"));
     while (q.next())
         out.push_back({q.value(0).toInt(), q.value(1).toString(), q.value(2).toString(),
-                       q.value(3).toBool(), q.value(4).toBool()});
+                       q.value(3).toBool(), q.value(4).toBool(), q.value(5).toBool()});
     return out;
 }
 
@@ -232,13 +243,13 @@ void PhotoRepository::setFolderScanned(int folderId, const QString& when) {
 
 bool PhotoRepository::getFolder(int folderId, FolderRow* out) {
     QSqlQuery q(db());
-    run(q, QStringLiteral("SELECT id, path, root_path, recursive, enabled "
+    run(q, QStringLiteral("SELECT id, path, root_path, recursive, enabled, removable "
                           "FROM folders WHERE id = ?"), {folderId});
     if (!q.next())
         return false;
     if (out)
         *out = {q.value(0).toInt(), q.value(1).toString(), q.value(2).toString(),
-                q.value(3).toBool(), q.value(4).toBool()};
+                q.value(3).toBool(), q.value(4).toBool(), q.value(5).toBool()};
     return true;
 }
 
@@ -247,7 +258,8 @@ QJsonArray PhotoRepository::listFoldersDetail() {
     QSqlQuery q(db());
     q.exec(QStringLiteral(
         "SELECT id, path, root_path, label, enabled, auto_disabled, recursive, "
-        "added_at, last_scan_at, deleted_at FROM folders ORDER BY path"));
+        "removable, volume_label, analytics_excluded, added_at, last_scan_at, deleted_at "
+        "FROM folders ORDER BY path"));
     while (q.next())
         arr.append(rowToJson(q));
     return arr;
@@ -258,6 +270,21 @@ void PhotoRepository::setFolderEnabled(int folderId, bool enabled) {
     QSqlQuery q(db());
     run(q, QStringLiteral("UPDATE folders SET enabled = ?, auto_disabled = 0 WHERE id = ?"),
         {enabled ? 1 : 0, folderId});
+}
+
+void PhotoRepository::setFolderMedia(int folderId, bool removable, const QVariant& volumeLabel) {
+    // Régler le caractère amovible et le libellé de volume. Ne touche jamais aux
+    // fichiers : c'est une propriété de la sélection, appliquée dès la prochaine passe.
+    QSqlQuery q(db());
+    run(q, QStringLiteral("UPDATE folders SET removable = ?, volume_label = ? WHERE id = ?"),
+        {removable ? 1 : 0, volumeLabel, folderId});
+}
+
+void PhotoRepository::setFolderAnalyticsExcluded(int folderId, bool excluded) {
+    // Bascule NON destructive : les données restent, seules les analyses les ignorent.
+    QSqlQuery q(db());
+    run(q, QStringLiteral("UPDATE folders SET analytics_excluded = ? WHERE id = ?"),
+        {excluded ? 1 : 0, folderId});
 }
 
 void PhotoRepository::softDeleteFolder(int folderId, const QString& now) {
@@ -418,10 +445,16 @@ QJsonObject PhotoRepository::summary() {
     o["files_missing"]  = scalar(QStringLiteral("SELECT COUNT(*) FROM files WHERE state='missing'"));
     o["folders_total"]  = scalar(QStringLiteral("SELECT COUNT(*) FROM folders"));
     o["folders_active"] = scalar(QStringLiteral("SELECT COUNT(*) FROM folders WHERE enabled=1"));
+    // Boîtiers / objectifs / années : dimensions ANALYTIQUES, elles respectent
+    // l'exclusion d'analyse (un dossier sorti des analyses n'y compte plus). Les
+    // totaux bruts de photothèque ci-dessus (total/présentes/disparues, dossiers)
+    // décrivent au contraire TOUTE la base indexée : ils l'ignorent volontairement.
     o["cameras"]        = scalar(QStringLiteral("SELECT COUNT(DISTINCT camera_model) FROM files "
-                                                "WHERE state='present' AND camera_model IS NOT NULL"));
+                                                "WHERE ") + analyzablePredicate() +
+                                                QStringLiteral(" AND camera_model IS NOT NULL"));
     o["lenses"]         = scalar(QStringLiteral("SELECT COUNT(DISTINCT lens) FROM files "
-                                                "WHERE state='present' AND lens IS NOT NULL"));
+                                                "WHERE ") + analyzablePredicate() +
+                                                QStringLiteral(" AND lens IS NOT NULL"));
     o["years"]          = yearsArr;
     return o;
 }
@@ -488,8 +521,9 @@ QJsonArray PhotoRepository::distinct(const QString& column, const QString& label
     QJsonArray arr;
     QSqlQuery q(db());
     q.exec(QStringLiteral("SELECT %1 AS %2, COUNT(*) AS count FROM files "
-                          "WHERE state='present' AND %1 IS NOT NULL "
-                          "GROUP BY %1 ORDER BY count DESC, %2").arg(column, label));
+                          "WHERE %3 AND %1 IS NOT NULL "
+                          "GROUP BY %1 ORDER BY count DESC, %2")
+               .arg(column, label, analyzablePredicate()));
     while (q.next())
         arr.append(rowToJson(q));
     return arr;
@@ -503,7 +537,8 @@ QJsonArray PhotoRepository::years() {
     QJsonArray arr;
     QSqlQuery q(db());
     q.exec(QStringLiteral("SELECT taken_year AS year, COUNT(*) AS count FROM files "
-                          "WHERE state='present' AND taken_year IS NOT NULL "
+                          "WHERE ") + analyzablePredicate() +
+                          QStringLiteral(" AND taken_year IS NOT NULL "
                           "GROUP BY taken_year ORDER BY taken_year"));
     while (q.next())
         arr.append(rowToJson(q));
@@ -540,8 +575,8 @@ QJsonObject PhotoRepository::photoDataset() {
     // Un seul parcours des photos presentes ; ordre chronologique stable et utile.
     q.exec(QStringLiteral(
         "SELECT taken_at, camera_model, lens, file_type, focal_length, focal_length_35mm, "
-        "aperture, iso, shutter_speed_s, folder_id FROM files WHERE state='present' "
-        "ORDER BY taken_at IS NULL, taken_at, id"));
+        "aperture, iso, shutter_speed_s, folder_id FROM files WHERE ") + analyzablePredicate() +
+        QStringLiteral(" ORDER BY taken_at IS NULL, taken_at, id"));
     while (q.next()) {
         takenAt.append(num(q.value(0)));
         camera.append(intern(q.value(1), camDict, camIdx));
@@ -592,6 +627,53 @@ QJsonObject PhotoRepository::latestRun(bool* found) {
     }
     if (found) *found = true;
     return rowToJson(q);
+}
+
+// --- Purge (suppression DÉFINITIVE) -----------------------------------------
+//
+// Contrairement au retrait doux (state='deleted', réversible), la purge efface
+// vraiment les lignes : aucune restauration. Réservée à un choix explicite de
+// l'utilisateur (nettoyer un boîtier de test, une année en double, un CD ré-gravé).
+
+int PhotoRepository::purgeFolder(int folderId) {
+    // Ordre imposé par la clé étrangère files.folder_id -> folders.id : effacer les
+    // fichiers AVANT la sélection, sinon la suppression du dossier échoue.
+    QSqlQuery q1(db());
+    run(q1, QStringLiteral("DELETE FROM files WHERE folder_id = ?"), {folderId});
+    const int n = q1.numRowsAffected();
+    QSqlQuery q2(db());
+    run(q2, QStringLiteral("DELETE FROM folders WHERE id = ?"), {folderId});
+    return n < 0 ? 0 : n;
+}
+
+int PhotoRepository::purgeByYear(int year) {
+    // taken_year est une colonne calculée (année de prise de vue). Toutes les
+    // sélections confondues : c'est une suppression par critère, pas par dossier.
+    QSqlQuery q(db());
+    run(q, QStringLiteral("DELETE FROM files WHERE taken_year = ?"), {year});
+    const int n = q.numRowsAffected();
+    return n < 0 ? 0 : n;
+}
+
+int PhotoRepository::purgeByCamera(const QString& camera) {
+    QSqlQuery q(db());
+    run(q, QStringLiteral("DELETE FROM files WHERE camera_model = ?"), {camera});
+    const int n = q.numRowsAffected();
+    return n < 0 ? 0 : n;
+}
+
+int PhotoRepository::purgeAll() {
+    // Remise à zéro complète du domaine : fichiers, sélections et historique des
+    // passes. L'ordre respecte les clés étrangères (enfants d'abord). La base et son
+    // schéma restent en place (aucune migration à rejouer), seulement vidés.
+    QSqlQuery qc(db());
+    run(qc, QStringLiteral("SELECT COUNT(*) FROM files"));
+    const int n = qc.next() ? qc.value(0).toInt() : 0;
+    QSqlQuery q1(db()); run(q1, QStringLiteral("DELETE FROM index_errors"));
+    QSqlQuery q2(db()); run(q2, QStringLiteral("DELETE FROM files"));
+    QSqlQuery q3(db()); run(q3, QStringLiteral("DELETE FROM index_runs"));
+    QSqlQuery q4(db()); run(q4, QStringLiteral("DELETE FROM folders"));
+    return n;
 }
 
 } // namespace morfphoto

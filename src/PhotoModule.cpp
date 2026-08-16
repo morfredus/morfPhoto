@@ -295,6 +295,7 @@ QString PhotoModule::matchingRoot(const QString& path) const {
 }
 
 bool PhotoModule::addFolder(const QString& path, const QVariant& label, bool recursive,
+                            bool removable, const QVariant& volumeLabel,
                             QJsonObject* out, QString* error) {
     // Validation « sous racine » : règle de sécurité, portée par le métier, donc
     // valable quelle que soit la porte (y compris une requête HTTP forgée).
@@ -315,10 +316,17 @@ bool PhotoModule::addFolder(const QString& path, const QVariant& label, bool rec
             if (error) *error = QStringLiteral("le dossier %1 est deja surveille").arg(path);
             return false;
         }
-        return restoreFolder(existing, out);
+        // Ré-ajout d'un chemin retiré : le restaurer, puis réappliquer les réglages
+        // de support demandés (l'utilisateur peut le re-déclarer amovible et nommer
+        // son volume au passage).
+        if (!restoreFolder(existing, out))
+            return false;
+        m_readRepo->setFolderMedia(existing, removable, volumeLabel);
+        if (out) *out = findById(m_readRepo->listFoldersDetail(), existing);
+        return true;
     }
 
-    const int id = m_readRepo->addFolder(path, root, label, recursive, nowIso());
+    const int id = m_readRepo->addFolder(path, root, label, recursive, removable, volumeLabel, nowIso());
     if (id < 0) { if (error) *error = QStringLiteral("insertion impossible"); return false; }
     if (out) *out = findById(m_readRepo->listFoldersDetail(), id);
     return true;
@@ -330,6 +338,64 @@ bool PhotoModule::setFolderEnabled(int folderId, bool enabled, QJsonObject* out)
     m_readRepo->setFolderEnabled(folderId, enabled);
     if (out) *out = findById(m_readRepo->listFoldersDetail(), folderId);
     return true;
+}
+
+bool PhotoModule::setFolderMedia(int folderId, bool removable, const QVariant& volumeLabel,
+                                 QJsonObject* out) {
+    if (!m_readRepo || !m_readRepo->getFolder(folderId))
+        return false;
+    m_readRepo->setFolderMedia(folderId, removable, volumeLabel);
+    if (out) *out = findById(m_readRepo->listFoldersDetail(), folderId);
+    return true;
+}
+
+bool PhotoModule::setFolderAnalyticsExcluded(int folderId, bool excluded, QJsonObject* out) {
+    if (!m_readRepo || !m_readRepo->getFolder(folderId))
+        return false;
+    m_readRepo->setFolderAnalyticsExcluded(folderId, excluded);
+    if (out) *out = findById(m_readRepo->listFoldersDetail(), folderId);
+    return true;
+}
+
+QJsonObject PhotoModule::purge(const QString& scope, const QVariant& value) {
+    QJsonObject o;
+    o["scope"] = scope;
+    if (!m_readRepo) {
+        o["error"] = QStringLiteral("base non ouverte");
+        return o;
+    }
+    // Une passe pourrait écrire pendant qu'on efface : refuser la purge tant qu'une
+    // indexation tourne (garde simple, cohérente avec « une seule passe à la fois »).
+    {
+        QMutexLocker lock(&m_stateMutex);
+        if (m_indexing) {
+            o["error"] = QStringLiteral("indexation en cours, reessayer apres la passe");
+            return o;
+        }
+    }
+    int deleted = 0;
+    if (scope == QLatin1String("folder")) {
+        bool ok = false;
+        const int id = value.toInt(&ok);
+        if (!ok) { o["error"] = QStringLiteral("id de dossier invalide"); return o; }
+        deleted = m_readRepo->purgeFolder(id);
+    } else if (scope == QLatin1String("year")) {
+        bool ok = false;
+        const int year = value.toInt(&ok);
+        if (!ok) { o["error"] = QStringLiteral("annee invalide"); return o; }
+        deleted = m_readRepo->purgeByYear(year);
+    } else if (scope == QLatin1String("camera")) {
+        const QString cam = value.toString();
+        if (cam.isEmpty()) { o["error"] = QStringLiteral("boitier vide"); return o; }
+        deleted = m_readRepo->purgeByCamera(cam);
+    } else if (scope == QLatin1String("all")) {
+        deleted = m_readRepo->purgeAll();
+    } else {
+        o["error"] = QStringLiteral("portee inconnue: %1").arg(scope);
+        return o;
+    }
+    o["deleted"] = deleted;
+    return o;
 }
 
 bool PhotoModule::removeFolder(int folderId) {

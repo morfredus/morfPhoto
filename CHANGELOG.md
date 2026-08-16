@@ -3,6 +3,37 @@
 Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/)
 et du [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [0.6.0] - 2026-08-17
+
+### Ajouté
+
+- **Supports amovibles (CD/DVD, disques d'archive).** Une sélection peut être déclarée
+  `removable` : morfPhoto ne marque **jamais** ses fichiers disparus quand le support
+  est absent. Le cas piège d'un point de montage resté présent mais vide (un CD partagé
+  en SMB puis éjecté renvoie « 0 fichier vu ») ne fait donc plus sortir toute l'archive
+  des données. Les photos gravées restent indexées, donc dans morfAnalytics, support
+  éjecté **et** après un redémarrage du service (la base SQLite est persistante).
+  Un `volume_label` optionnel nomme le disque (« PHOTOS-2015 ») pour le reconnaître.
+- **Exclusion des analyses sans suppression.** `analytics_excluded` sort une sélection
+  des agrégats analytiques (dataset, années, boîtiers, objectifs, focales) **sans effacer
+  ses données** : les fichiers restent indexés et consultables, réversible à tout moment.
+  Les totaux bruts de photothèque (`files_total/present/missing`, dossiers) décrivent
+  toujours toute la base indexée.
+- **Purge définitive, sélective ou totale** (`POST /api/v1/purge`, portées
+  `folder|year|camera|all`). Contrairement au retrait doux (réversible), elle **efface
+  réellement** les lignes de la base ; les fichiers d'origine sur le disque ne sont
+  jamais touchés. Refusée pendant une passe d'indexation.
+- **API dossiers enrichie.** `POST /api/v1/folders` accepte `removable` et `volume_label` ;
+  `PATCH /api/v1/folders/{id}` accepte désormais n'importe quel sous-ensemble de
+  `enabled`, `removable`, `volume_label`, `analytics_excluded` (le détail de la
+  sélection expose ces trois nouveaux champs).
+
+### Modifié
+
+- **Schéma SQLite v4** : colonnes additives `removable`, `volume_label`,
+  `analytics_excluded` sur `folders`. Migration transparente pour une base existante
+  (valeurs par défaut neutres, aucun historique perdu).
+
 ## [0.5.7] - 2026-08-16
 
 ### Retiré

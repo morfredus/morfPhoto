@@ -66,13 +66,26 @@ public:
     // pour guider l'utilisateur, qui ne peut declarer qu'a l'interieur.
     QJsonArray  allowedRoots() const;
     // Ajoute une sélection. Refuse (false + *error) si hors racine autorisée.
+    // `removable` : le dossier vit sur un support amovible (archive), son absence ne
+    // vaudra jamais suppression. `volumeLabel` : nom du support (QVariant vide = aucun).
     bool addFolder(const QString& path, const QVariant& label, bool recursive,
+                   bool removable, const QVariant& volumeLabel,
                    QJsonObject* out, QString* error);
     bool setFolderEnabled(int folderId, bool enabled, QJsonObject* out); // false si absent
+    // Règle le support amovible (drapeau + libellé) d'une sélection. false si absent.
+    bool setFolderMedia(int folderId, bool removable, const QVariant& volumeLabel, QJsonObject* out);
+    // Sort/réintègre une sélection des analyses sans effacer ses données. false si absent.
+    bool setFolderAnalyticsExcluded(int folderId, bool excluded, QJsonObject* out);
     bool removeFolder(int folderId);                                     // false si absent
     // Restaure un dossier retiré (retrait doux) : il redevient surveillé et une
     // passe le ravive. false si l'id est inconnu.
     bool restoreFolder(int folderId, QJsonObject* out);
+
+    // Purge DÉFINITIVE (irréversible, distincte du retrait doux) selon une portée :
+    //   scope="folder" (value = id), "year" (value = année), "camera" (value = nom),
+    //   "all" (value ignorée). Retourne { deleted, scope } ou { error } si portée
+    //   inconnue / valeur invalide.
+    QJsonObject purge(const QString& scope, const QVariant& value);
 
     // --- Indexation ---
     // Déclenche une passe ASYNCHRONE. Retourne { accepted, state, started_at }.

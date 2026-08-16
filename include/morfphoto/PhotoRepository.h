@@ -39,8 +39,9 @@ public:
     QString openError() const { return m_openError; }  // detail si open() a echoue
 
     // --- Dossiers (sélections) ---
-    int  addFolder(const QString& path, const QString& rootPath,
-                   const QVariant& label, bool recursive, const QString& addedAt);
+    int  addFolder(const QString& path, const QString& rootPath, const QVariant& label,
+                   bool recursive, bool removable, const QVariant& volumeLabel,
+                   const QString& addedAt);
     QVector<FolderRow> activeFolders();
     QVector<FolderRow> allFolders();
     void setFolderAutoDisabled(int folderId, bool autoDisabled);
@@ -48,6 +49,10 @@ public:
     bool getFolder(int folderId, FolderRow* out = nullptr);
     QJsonArray listFoldersDetail();
     void setFolderEnabled(int folderId, bool enabled);
+    // Réglages du support amovible d'une sélection (drapeau + libellé de volume).
+    void setFolderMedia(int folderId, bool removable, const QVariant& volumeLabel);
+    // Sortir (ou réintégrer) une sélection des analyses sans effacer ses données.
+    void setFolderAnalyticsExcluded(int folderId, bool excluded);
     void softDeleteFolder(int folderId, const QString& now);
     void restoreFolder(int folderId);
     // Id d'un dossier par son chemin (UNIQUE), -1 si absent. *deleted indique s'il
@@ -87,6 +92,15 @@ public:
     // sur 20 000+ photos. Valeurs BRUTES, aucun regroupement ; les NULL sont
     // preserves (distinguer valeur absente de valeur nulle, cf qualite des metadonnees).
     QJsonObject photoDataset();
+
+    // --- Purge (suppression DÉFINITIVE, à distinguer du retrait doux) ---
+    // Efface RÉELLEMENT des lignes de la base (aucune restauration possible). Chaque
+    // méthode renvoie le nombre de fichiers supprimés. Destructif et volontaire :
+    // l'appelant (API + PhotoHub) confirme explicitement avant d'y recourir.
+    int purgeFolder(int folderId);            // fichiers du dossier + la sélection
+    int purgeByYear(int year);                // fichiers d'une année de prise de vue
+    int purgeByCamera(const QString& camera); // fichiers d'un boîtier
+    int purgeAll();                           // remise à zéro : fichiers, sélections, historique
 
 private:
     bool applyMigrations();

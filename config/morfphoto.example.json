@@ -16,13 +16,14 @@
 
   "modules": [
     {
-      "_comment": "Module metier : indexation permanente de la phototheque. 'roots' definit les RACINES AUTORISEES (perimetre que morfPhoto a le droit d'explorer) ; PhotoHub ne peut declarer de selection qu'a l'interieur. 'db_path' vide => etat du service (/var/lib/morfsystem/morfphoto/photos.db).",
+      "_comment": "Module metier : indexation permanente de la phototheque. 'roots' definit les RACINES AUTORISEES (perimetre que morfPhoto a le droit d'explorer) ; PhotoHub ne peut declarer de selection qu'a l'interieur. Pour indexer un CD/DVD ou un disque d'archive, ajouter ici son point de montage (ex. /media/morfredus) puis, dans PhotoHub, declarer la selection comme SUPPORT AMOVIBLE : morfPhoto ne marquera jamais ses photos disparues quand le support est absent (elles restent dans la base et dans morfAnalytics, meme apres ejection et apres un reboot). 'db_path' vide => etat du service (/var/lib/morfsystem/morfphoto/photos.db).",
       "type": "photo",
       "id": "photo-1",
       "db_path": "",
       "roots": [
         "/mnt/photos",
-        "/srv/archives-photo"
+        "/srv/archives-photo",
+        "/media/morfredus"
       ],
       "watch": {
         "_comment": "'interval_ms' : cadence de la reconciliation automatique. DEFAUT 0 = automatique DESACTIVE : aucune passe de fond, l'indexation se fait UNIQUEMENT a la demande (bouton PhotoHub ou POST /api/v1/index) -- aucune pression de fond sur la machine. Mettre une valeur positive pour reactiver une passe periodique (ex. 86400000 = une fois par jour) ; attention, une passe re-parcourt et 'stat' tout l'arbre des dossiers surveilles plus une sonde par racine, couteux surtout sur un montage reseau. 'availability_timeout_ms' : delai borne des sondes d'accessibilite d'une racine avant de la declarer indisponible (tolerance aux montages distants type SMB/CIFS ou NFS). Au-dela, la racine est jugee injoignable et la passe est interrompue proprement -- sans marquer les fichiers comme disparus -- au lieu de rester figee le temps du timeout du montage (jusqu'a ~180 s en CIFS). Defaut 5000.",

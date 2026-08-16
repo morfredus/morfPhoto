@@ -2,7 +2,7 @@
 
 *Read in another language: **English** (this document) · [Français](README.fr.md).*
 
-[![Version](https://img.shields.io/badge/version-0.5.7-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.6.0-blue)](CHANGELOG.md)
 ![C++](https://img.shields.io/badge/C%2B%2B-17-00599C?logo=cplusplus)
 ![Qt](https://img.shields.io/badge/Qt-6-41CD52?logo=qt)
 ![Build](https://img.shields.io/badge/CMake-3.21+-064F8C?logo=cmake)
@@ -33,7 +33,16 @@ layer (morfAnalytics).
   cadence (e.g. `86400000`, once a day) to also run a periodic reconciliation. One
   pass at a time - a concurrent request is refused, never queued.
 - **Never destroys implicitly**: a vanished file is marked missing; removing a
-  folder is a soft retire that preserves its history.
+  folder is a soft retire that preserves its history. Permanent deletion exists
+  (`POST /api/v1/purge`, by folder, year, camera or all), but it stays an **explicit**,
+  confirmed action, never automatic.
+- **Handles removable media** (CD/DVD, archive disks). A selection flagged removable
+  never has its photos marked missing while the medium is absent - even if the mount
+  point stayed present but empty (the ejected-CD trap). Burned photos therefore remain
+  in the database and in morfAnalytics, medium removed and after a restart. An optional
+  volume label helps recognise the disk.
+- **Separates analysis from preservation**: a selection can be taken out of analytics
+  (`analytics_excluded`) without erasing its data - reversible at any time.
 - **Tolerates a disappearing remote source**: a root may be a network mount
   (SMB/CIFS, NFS...) that becomes unreachable mid-pass. morfPhoto does not mistake an
   absent source for deletion: a file is only marked missing when its root was scanned
@@ -56,9 +65,10 @@ GET  /api/v1/photos/cameras|lenses|focals|years
 POST /api/v1/index               trigger a pass (async): {"mode":"incremental|full"}
 GET  /api/v1/index/status        indexing state + last run
 GET  /api/v1/folders             watched selections
-POST /api/v1/folders             declare a selection (403 outside an allowed root)
-PATCH  /api/v1/folders/{id}      enable / disable
+POST /api/v1/folders             declare a selection (403 outside an allowed root); optional removable, volume_label
+PATCH  /api/v1/folders/{id}      update enabled, removable, volume_label, analytics_excluded (any subset)
 DELETE /api/v1/folders/{id}      soft retire (history preserved)
+POST /api/v1/purge               PERMANENT deletion: {"scope":"folder|year|camera|all","value":...}
 ```
 
 Allowed roots are declared in the configuration; selections managed through the API

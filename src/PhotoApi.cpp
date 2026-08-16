@@ -164,9 +164,14 @@ PhotoApi::Result PhotoApi::handle(const QByteArray& method, const QString& path,
                 const QVariant label = in.contains(QStringLiteral("label"))
                     ? QVariant(in.value(QStringLiteral("label")).toString()) : QVariant();
                 const bool recursive = in.value(QStringLiteral("recursive")).toBool(true);
+                // Support amovible (CD/DVD, archive) : optionnel, défaut = non amovible.
+                const bool removable = in.value(QStringLiteral("removable")).toBool(false);
+                const QVariant volumeLabel = in.contains(QStringLiteral("volume_label"))
+                    ? QVariant(in.value(QStringLiteral("volume_label")).toString()) : QVariant();
                 QJsonObject out;
                 QString err;
-                if (!m_module->addFolder(folderPath, label, recursive, &out, &err)) {
+                if (!m_module->addFolder(folderPath, label, recursive, removable, volumeLabel,
+                                         &out, &err)) {
                     const int code = err.contains(QStringLiteral("racine")) ? 403 : 400;
                     return error(code, code == 403 ? QStringLiteral("root_violation")
                                                    : QStringLiteral("bad_request"), err);
@@ -192,11 +197,53 @@ PhotoApi::Result PhotoApi::handle(const QByteArray& method, const QString& path,
             return error(404, QStringLiteral("not_found"), path);
         if (method == "PATCH") {
             const QJsonObject in = QJsonDocument::fromJson(body).object();
-            if (!in.value(QStringLiteral("enabled")).isBool())
-                return error(400, QStringLiteral("bad_request"), QStringLiteral("`enabled` (booleen) obligatoire"));
+            // PATCH partiel : n'importe quel sous-ensemble de champs réglables. Au
+            // moins un champ reconnu doit être présent, sinon la requête ne fait rien.
+            const bool hasEnabled    = in.contains(QStringLiteral("enabled"));
+            const bool hasRemovable  = in.contains(QStringLiteral("removable"));
+            const bool hasVolume     = in.contains(QStringLiteral("volume_label"));
+            const bool hasExcluded   = in.contains(QStringLiteral("analytics_excluded"));
+            if (!hasEnabled && !hasRemovable && !hasVolume && !hasExcluded)
+                return error(400, QStringLiteral("bad_request"),
+                             QStringLiteral("aucun champ modifiable (enabled, removable, "
+                                            "volume_label, analytics_excluded)"));
             QJsonObject out;
-            if (!m_module->setFolderEnabled(id, in.value(QStringLiteral("enabled")).toBool(), &out))
-                return error(404, QStringLiteral("not_found"), QStringLiteral("selection %1 introuvable").arg(id));
+            if (hasEnabled) {
+                if (!in.value(QStringLiteral("enabled")).isBool())
+                    return error(400, QStringLiteral("bad_request"), QStringLiteral("`enabled` doit etre booleen"));
+                if (!m_module->setFolderEnabled(id, in.value(QStringLiteral("enabled")).toBool(), &out))
+                    return error(404, QStringLiteral("not_found"), QStringLiteral("selection %1 introuvable").arg(id));
+            }
+            if (hasRemovable || hasVolume) {
+                // removable et volume_label vont ensemble côté base : compléter le champ
+                // absent avec la valeur courante de la sélection pour ne rien écraser.
+                QJsonObject current;
+                for (const QJsonValue& v : m_module->listFolders())
+                    if (v.toObject().value(QStringLiteral("id")).toInt() == id) { current = v.toObject(); break; }
+                if (current.isEmpty())
+                    return error(404, QStringLiteral("not_found"), QStringLiteral("selection %1 introuvable").arg(id));
+                if (hasRemovable && !in.value(QStringLiteral("removable")).isBool())
+                    return error(400, QStringLiteral("bad_request"), QStringLiteral("`removable` doit etre booleen"));
+                const bool removable = hasRemovable
+                    ? in.value(QStringLiteral("removable")).toBool()
+                    : (current.value(QStringLiteral("removable")).toInt() == 1);
+                QVariant volumeLabel;
+                if (hasVolume) {
+                    const QJsonValue vl = in.value(QStringLiteral("volume_label"));
+                    volumeLabel = vl.isNull() ? QVariant() : QVariant(vl.toString());
+                } else {
+                    const QJsonValue vl = current.value(QStringLiteral("volume_label"));
+                    volumeLabel = vl.isNull() ? QVariant() : QVariant(vl.toString());
+                }
+                if (!m_module->setFolderMedia(id, removable, volumeLabel, &out))
+                    return error(404, QStringLiteral("not_found"), QStringLiteral("selection %1 introuvable").arg(id));
+            }
+            if (hasExcluded) {
+                if (!in.value(QStringLiteral("analytics_excluded")).isBool())
+                    return error(400, QStringLiteral("bad_request"), QStringLiteral("`analytics_excluded` doit etre booleen"));
+                if (!m_module->setFolderAnalyticsExcluded(id, in.value(QStringLiteral("analytics_excluded")).toBool(), &out))
+                    return error(404, QStringLiteral("not_found"), QStringLiteral("selection %1 introuvable").arg(id));
+            }
             return ok(out);
         }
         if (method == "DELETE") {
@@ -206,6 +253,30 @@ PhotoApi::Result PhotoApi::handle(const QByteArray& method, const QString& path,
             return ok(o);
         }
         return error(405, QStringLiteral("method_not_allowed"));
+    }
+
+    // ---- /purge : suppression DÉFINITIVE de données (irréversible) ----
+    // Distincte du retrait doux d'un dossier (DELETE /folders/{id}, réversible). Efface
+    // vraiment des lignes selon une portée. Réservée à un choix explicite du client.
+    if (!seg.isEmpty() && seg[0] == QLatin1String("purge")) {
+        if (seg.size() != 1)
+            return error(404, QStringLiteral("not_found"), path);
+        if (method != "POST")
+            return error(405, QStringLiteral("method_not_allowed"));
+        const QJsonObject in = QJsonDocument::fromJson(body).object();
+        const QString scope = in.value(QStringLiteral("scope")).toString();
+        if (scope.isEmpty())
+            return error(400, QStringLiteral("bad_request"),
+                         QStringLiteral("`scope` obligatoire (folder|year|camera|all)"));
+        // La valeur porte l'identifiant/critère ; ignorée pour scope=all. On la passe
+        // en QVariant : le module valide selon la portée (entier pour folder/year, etc.).
+        const QJsonValue v = in.value(QStringLiteral("value"));
+        const QVariant value = v.isNull() ? QVariant() : v.toVariant();
+        const QJsonObject result = m_module->purge(scope, value);
+        if (result.contains(QStringLiteral("error")))
+            return error(400, QStringLiteral("bad_request"),
+                         result.value(QStringLiteral("error")).toString());
+        return ok(result);
     }
 
     return error(404, QStringLiteral("not_found"), path);

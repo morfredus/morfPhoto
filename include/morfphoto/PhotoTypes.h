@@ -70,6 +70,10 @@ struct FolderRow {
     QString rootPath;
     bool    recursive = true;
     bool    enabled   = true;
+    // Support amovible (CD/DVD, disque d'archive) : l'absence du dossier est NORMALE
+    // et ne doit jamais valoir suppression. Une passe ne marque JAMAIS disparu un
+    // fichier d'un tel dossier (voir Indexer::reconcileFolder).
+    bool    removable = false;
 };
 
 // Compteurs d'une passe de réconciliation, tenus à jour puis écrits dans index_runs.

@@ -23,7 +23,7 @@
 // -----------------------------------------------------------------------------
 namespace morfphoto {
 
-inline constexpr int kSchemaVersion = 3;
+inline constexpr int kSchemaVersion = 4;
 
 // Instructions de la migration 001 (création initiale). La colonne calculée
 // `taken_year` permet de regrouper par année sans reparser la date à chaque fois.
@@ -142,6 +142,27 @@ inline QStringList schemaV3Statements() {
     };
 }
 
+// Migration 004 : gestion des SUPPORTS AMOVIBLES (CD/DVD, disques d'archive) et de
+// la portée d'analyse. Trois colonnes additives sur `folders` :
+//   - `removable` : la sélection vit sur un support qu'on retire (CD gravé rangé sur
+//     une étagère). Son absence est NORMALE : une passe ne marque alors jamais ses
+//     fichiers disparus (l'archive reste dans la base, donc dans morfAnalytics, même
+//     support éjecté et même après un reboot). Voir Indexer::reconcileFolder.
+//   - `volume_label` : nom du support saisi par l'utilisateur (« PHOTOS-2015 »), pour
+//     reconnaître le disque d'une insertion à l'autre et l'étiqueter dans l'interface.
+//   - `analytics_excluded` : sortir une sélection des ANALYSES sans effacer ses
+//     données. Les fichiers restent indexés (consultables, restaurables), mais les
+//     agrégats analytiques (dataset, années, boîtiers, objectifs, focales) les
+//     ignorent. Réversible, non destructif — à distinguer de la purge.
+// Colonnes additives, valeurs par défaut neutres pour tout l'historique existant.
+inline QStringList schemaV4Statements() {
+    return {
+        QStringLiteral("ALTER TABLE folders ADD COLUMN removable INTEGER NOT NULL DEFAULT 0"),
+        QStringLiteral("ALTER TABLE folders ADD COLUMN volume_label TEXT"),
+        QStringLiteral("ALTER TABLE folders ADD COLUMN analytics_excluded INTEGER NOT NULL DEFAULT 0"),
+    };
+}
+
 // Instructions à exécuter pour atteindre une version de schéma donnée. Le dépôt
 // applique dans l'ordre chaque version manquante (voir applyMigrations).
 inline QStringList migrationStatements(int version) {
@@ -149,6 +170,7 @@ inline QStringList migrationStatements(int version) {
     case 1:  return schemaV1Statements();
     case 2:  return schemaV2Statements();
     case 3:  return schemaV3Statements();
+    case 4:  return schemaV4Statements();
     default: return {};
     }
 }
