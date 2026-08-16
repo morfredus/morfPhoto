@@ -37,6 +37,7 @@ import subprocess
 import time
 from pathlib import Path
 
+from ..activity import emit_build_activity
 from ..manifest import Manifest
 from .base import ServiceBackend
 
@@ -414,10 +415,18 @@ class WindowsBackend(ServiceBackend):
     def build_as_user(self, repo_root: Path, preset: str, run_user: str) -> None:
         """No privilege drop: Windows has no sudo, and the elevated shell is
         the same user, so the build tree keeps ordinary ownership."""
-        subprocess.run(
-            f"cmake --preset {preset} && cmake --build --preset {preset}",
-            cwd=repo_root, shell=True, check=True,
-        )
+        # Signale la compilation au domaine Monitor de morfAnalytics (best-effort ;
+        # emise meme sur echec, puis l'exception remonte normalement).
+        start = time.time()
+        ok = False
+        try:
+            subprocess.run(
+                f"cmake --preset {preset} && cmake --build --preset {preset}",
+                cwd=repo_root, shell=True, check=True,
+            )
+            ok = True
+        finally:
+            emit_build_activity(repo_root, preset, start, time.time(), ok)
 
     # -- Internals --------------------------------------------------------
 

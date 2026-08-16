@@ -12,8 +12,10 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
+from ..activity import emit_build_activity
 from ..manifest import Manifest
 from .base import ServiceBackend
 
@@ -168,6 +170,16 @@ class SystemdBackend(ServiceBackend):
         """
         command = f"cd {repo_root!s} && cmake --preset {preset} && cmake --build --preset {preset}"
         if run_user != "root" and shutil.which("sudo"):
-            subprocess.run(["sudo", "-u", run_user, "bash", "-lc", command], check=True)
+            args = ["sudo", "-u", run_user, "bash", "-lc", command]
         else:
-            subprocess.run(["bash", "-lc", command], check=True)
+            args = ["bash", "-lc", command]
+        # Signale la compilation au domaine Monitor de morfAnalytics (best-effort).
+        # `finally` : on emet meme sur echec (status=failed), puis l'exception
+        # remonte normalement -- un build casse reste un build casse.
+        start = time.time()
+        ok = False
+        try:
+            subprocess.run(args, check=True)
+            ok = True
+        finally:
+            emit_build_activity(repo_root, preset, start, time.time(), ok)
