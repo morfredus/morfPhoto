@@ -3,6 +3,16 @@
 Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/)
 et du [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [0.5.7] - 2026-08-16
+
+### Retiré
+
+- **`scripts/linux/deploy-config.sh` supprimé, redondant.** Le déploiement de config
+  est centralisé dans morfdeploy (`service.py config push --force`, ou `morf config
+  deploy morfPhoto`) : même effet (remplace la config déployée depuis le dépôt,
+  sauvegarde horodatée, redémarrage), mais **multi-plateforme** (Linux et Windows) et
+  sans script bash par projet. README (FR + EN) repointés.
+
 ## [0.5.6] - 2026-08-15
 
 ### Ajouté

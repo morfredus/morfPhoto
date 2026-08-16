@@ -2,7 +2,7 @@
 
 *Lire dans une autre langue : [English](README.md) · **Français** (ce document).*
 
-[![Version](https://img.shields.io/badge/version-0.5.6-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.5.7-blue)](CHANGELOG.md)
 ![C++](https://img.shields.io/badge/C%2B%2B-17-00599C?logo=cplusplus)
 ![Qt](https://img.shields.io/badge/Qt-6-41CD52?logo=qt)
 ![Build](https://img.shields.io/badge/CMake-3.21+-064F8C?logo=cmake)
@@ -114,15 +114,18 @@ copies vendorées avec `scripts/sync-morf.sh`.
 
 Pour **redéployer la configuration** vers `/etc/morfsystem/morfphoto/` après l'avoir
 modifiée (une racine, `watch.interval_ms`, le chemin d'ExifTool...), sans tout
-recompiler :
+recompiler, utiliser la commande unifiée du parc (sauvegarde horodatée, puis
+redémarre ; Linux comme Windows) :
 
 ```sh
-./scripts/linux/deploy-config.sh          # sauvegarde, montre le diff, puis redémarre
+sudo ./service.py config push --force     # ou, depuis la racine du parc : morf config deploy morfPhoto
 ```
 
 Contrairement à `service.py update` (qui n'ajoute que les clés manquantes, sans jamais
-écraser), ce script remplace le fichier déployé par celui du dépôt - garder un vrai
+écraser), `config push` remplace le fichier déployé par celui du dépôt - garder un vrai
 `config/morfphoto.json` dans le clone, avec ses racines, comme référence déployée.
+(Sans mode, `service.py config` n'ajoute que les clés d'une nouvelle version en gardant
+vos réglages.)
 
 ## Licence
 
