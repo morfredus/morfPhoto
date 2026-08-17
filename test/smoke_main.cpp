@@ -177,6 +177,16 @@ int main(int argc, char** argv) {
         const QJsonObject folders = ds.value(QStringLiteral("folders")).toObject();
         CHECK(folders.value(QString::number(fid)).toString() == photos,
               "dataset: folders mappe l'id du dossier vers son chemin");
+
+        // Empreinte de dedup : une par photo, alignee, non vide, et DISTINCTE pour
+        // deux fichiers differents (a.jpg 250o vs b.arw 200o). C'est la cle qui permet
+        // a l'analyse multi-sources de ne pas compter deux fois le meme fichier.
+        const QJsonArray fp = cols.value(QStringLiteral("fingerprint")).toArray();
+        CHECK(fp.size() == 2, "dataset: colonne fingerprint alignee sur count");
+        CHECK(!fp.at(0).toString().isEmpty() && !fp.at(1).toString().isEmpty(),
+              "dataset: empreintes non vides");
+        CHECK(fp.at(0).toString() != fp.at(1).toString(),
+              "dataset: deux fichiers differents -> empreintes distinctes");
     }
 
     // --- 4) Source distante perdue en cours de vie : ne pas confondre indisponible

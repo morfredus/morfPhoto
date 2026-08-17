@@ -3,6 +3,19 @@
 Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/)
 et du [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [0.7.0] - 2026-08-17
+
+### Ajouté
+
+- **Empreinte de dédoublonnage dans le dataset.** `/api/v1/photos/dataset` porte une
+  nouvelle colonne `fingerprint` (une par photo) : empreinte FNV-1a **stable
+  inter-machines** de `nom + taille + date de prise` (le chemin est exclu, car il
+  varie d'un poste à l'autre). Elle permet à morfAnalytics de fusionner plusieurs
+  photothèques du parc en **ne comptant qu'une fois** une photo indexée sur deux postes
+  (même CD, dossier partagé). `filename`/`size` ne sont PAS exposés : le dataset reste
+  anonyme, seule l'empreinte opaque en sort. Colonne **additive** : les consommateurs
+  existants l'ignorent sans changement.
+
 ## [0.6.0] - 2026-08-17
 
 ### Ajouté

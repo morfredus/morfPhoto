@@ -80,6 +80,24 @@ QString analyzablePredicate() {
         "(SELECT id FROM folders WHERE analytics_excluded = 1)");
 }
 
+// Empreinte STABLE inter-machines d'une photo, pour le dédoublonnage de la couche
+// d'analyse quand plusieurs postes indexent le MÊME fichier (un CD gravé indexé sur
+// deux machines, un dossier partagé). Deux copies partagent nom+taille+date de prise,
+// donc la même empreinte -- le CHEMIN est exclu à dessein (il varie d'un poste à
+// l'autre, montage ou lettre de lecteur différents). FNV-1a 64 bits, rendu en hexa :
+// opaque (l'anonymat du dataset est préservé, aucun nom de fichier n'est exposé),
+// compact, déterministe (aucune graine aléatoire, contrairement à qHash).
+QString fingerprintOf(const QString& filename, qint64 size, const QString& takenAt) {
+    const QByteArray key = (filename.toLower() + QLatin1Char('\x1f')
+                            + QString::number(size) + QLatin1Char('\x1f') + takenAt).toUtf8();
+    quint64 h = 1469598103934665603ULL;               // offset de base FNV-1a 64 bits
+    for (const char c : key) {
+        h ^= static_cast<unsigned char>(c);
+        h *= 1099511628211ULL;                         // nombre premier FNV 64 bits
+    }
+    return QString::number(h, 16);
+}
+
 // Traduction filtre public -> colonne SQL. Liste blanche : aucune autre clé
 // n'atteint le SQL, pas d'injection possible par un nom de champ.
 QString filterColumn(const QString& key) {
@@ -569,13 +587,17 @@ QJsonObject PhotoRepository::photoDataset() {
     };
 
     QJsonArray takenAt, camera, lens, fileType, focal, focal35, aperture, iso, shutterS, folder;
+    QJsonArray fingerprint;   // empreinte de dedup (une par photo), pour l'analyse multi-sources
     int count = 0;
 
     QSqlQuery q(db());
     // Un seul parcours des photos presentes ; ordre chronologique stable et utile.
+    // filename et size ne sont PAS exposes : ils servent uniquement a calculer
+    // l'empreinte (le dataset reste anonyme, seule l'empreinte opaque en sort).
     q.exec(QStringLiteral(
         "SELECT taken_at, camera_model, lens, file_type, focal_length, focal_length_35mm, "
-        "aperture, iso, shutter_speed_s, folder_id FROM files WHERE ") + analyzablePredicate() +
+        "aperture, iso, shutter_speed_s, folder_id, filename, size FROM files WHERE ")
+        + analyzablePredicate() +
         QStringLiteral(" ORDER BY taken_at IS NULL, taken_at, id"));
     while (q.next()) {
         takenAt.append(num(q.value(0)));
@@ -588,6 +610,8 @@ QJsonObject PhotoRepository::photoDataset() {
         iso.append(num(q.value(7)));
         shutterS.append(num(q.value(8)));
         folder.append(num(q.value(9)));
+        fingerprint.append(fingerprintOf(q.value(10).toString(), q.value(11).toLongLong(),
+                                         q.value(0).toString()));
         ++count;
     }
 
@@ -595,6 +619,7 @@ QJsonObject PhotoRepository::photoDataset() {
         {"taken_at", takenAt}, {"camera", camera}, {"lens", lens}, {"file_type", fileType},
         {"focal_length", focal}, {"focal_length_35mm", focal35}, {"aperture", aperture},
         {"iso", iso}, {"shutter_speed_s", shutterS}, {"folder_id", folder},
+        {"fingerprint", fingerprint},
     };
     QJsonObject dictionaries{
         {"camera", camDict}, {"lens", lensDict}, {"file_type", typeDict},
