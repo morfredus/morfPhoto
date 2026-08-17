@@ -30,5 +30,16 @@
   "state_dir": {
     "linux": "/var/lib/morfsystem/morfphoto",
     "windows": "%ProgramData%/morfsystem/morfphoto/state"
-  }
+  },
+  "_comment_purge": "Donnees effacables declarees par morfPhoto (voir morfTemplateService pour le contrat complet). La base d'indexation vit a un emplacement FIXE sous state_dir ($STATE_DIRECTORY), donc un purge de type 'path' est sur et correct. Les photos d'origine sur disque ne sont JAMAIS touchees : seule la base d'index est effacee, reconstructible par une reindexation (mais les selections/etat memorises dans la base sont perdus, d'ou destructive: true). Les overrides (morfphoto.overrides.json) ne sont pas purges : ce sont des choix utilisateur.",
+  "purge": [
+    {
+      "id": "database",
+      "label": "Base d'indexation photo (reindexable ; perd les selections memorisees)",
+      "destructive": true,
+      "type": "path",
+      "base": "state",
+      "paths": ["photos.db"]
+    }
+  ]
 }

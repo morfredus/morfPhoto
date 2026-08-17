@@ -594,10 +594,18 @@ class Deployer:
                 paths.append(Path(os.path.expandvars(previous)))
         return paths
 
-    def uninstall(self, purge: bool = False, backup_dir: Path | None = None) -> None:
-        print(f"Uninstalling {self.manifest.display_name} ({self.backend.name})")
-        self.check_privileges()
-        self.backend.uninstall(self.manifest)
+    def uninstall(self, purge: bool = False, backup_dir: Path | None = None,
+                  dry_run: bool = False) -> None:
+        verb = "Would uninstall" if dry_run else "Uninstalling"
+        print(f"{verb} {self.manifest.display_name} ({self.backend.name})")
+        # A dry-run touches nothing: it neither deregisters the service nor needs
+        # the rights to. It reports the same plan the real run would carry out, so
+        # `--dry-run` and the real run walk the same list -- only the acts differ.
+        if not dry_run:
+            self.check_privileges()
+            self.backend.uninstall(self.manifest)
+        else:
+            print("    would deregister the service")
 
         app_dir = self.manifest.app_dir()
         configs = [p for p in self.config_footprint() if p.exists()]
@@ -605,12 +613,27 @@ class Deployer:
 
         if not purge:
             print()
-            print("Service removed. Your configuration was kept:")
+            print("Service removed. Your configuration was kept:" if not dry_run
+                  else "Configuration would be kept:")
             for path in configs or [app_dir]:
                 print(f"    {path}")
             print("Re-run with --purge to remove it too "
                   "(add --backup to copy it first).")
             self.report_legacy_binaries()
+            return
+
+        if dry_run:
+            print("\nWould remove:")
+            if backup_dir is not None and configs:
+                print(f"    (after backing up the configuration to {backup_dir})")
+            for path in configs + legacy:
+                print(f"    {path}")
+            if app_dir.exists():
+                print(f"    {app_dir}")
+            config_dir = self.manifest.config_dir()
+            if config_dir.exists() and config_dir.name == self.manifest.service_name:
+                print(f"    {config_dir}")
+            print("\nNothing was removed (--dry-run).")
             return
 
         # --purge: copy first if asked, then remove. The backup happens before
@@ -651,6 +674,169 @@ class Deployer:
         if config_dir.exists() and config_dir.name == self.manifest.service_name:
             self._remove(config_dir)
         print("\nService and configuration removed.")
+
+    # -- Purge ------------------------------------------------------------
+
+    def purge(self, ids: list | None = None, purge_all: bool = False,
+              dry_run: bool = False, force: bool = False) -> None:
+        """Erase declared data categories: listing under --dry-run, doing it otherwise.
+
+        WHICH categories run is resolved identically whether or not this is a
+        dry-run. A --dry-run that took a shorter path would print a plan the
+        real run does not follow -- exactly the "looks like it works" layer this
+        whole chantier exists to remove. Only the last act differs: describe, or
+        perform.
+
+        morfdeploy never learns where a service keeps its data. A "path"
+        category names files under a base the manifest resolves; a "command"
+        category hands the erasure back to the project's own entry point. Here
+        we only carry out the stated intention.
+        """
+        ids = list(ids or [])
+        categories = self.manifest.purge_categories
+        if not categories:
+            raise DeployError(
+                f"{self.manifest.display_name} declares no purgeable data "
+                "(no 'purge' in service.json).")
+
+        selected = self._select_purge(categories, ids, purge_all)
+
+        if dry_run:
+            print(f"Would purge {self.manifest.display_name} "
+                  "(dry-run, nothing removed):")
+            # Surface the guard in the preview too, so the plan tells the whole
+            # truth: a real run would be refused here without --force.
+            if not force and self.backend.is_active(self.manifest):
+                print("  note: the service is running; a real purge would be "
+                      "refused without --force.")
+        else:
+            print(f"Purging {self.manifest.display_name} ({self.backend.name}):")
+            # Guard against erasing data out from under a live service: a running
+            # service may be mid-write to the very database being removed, and a
+            # file deleted under it corrupts state or crashes it. Refuse while it
+            # is clearly running; --force overrides for a caller who has stopped
+            # it (or accepts the risk). A backend that cannot tell reports "not
+            # active" and never blocks on a guess.
+            if not force and self.backend.is_active(self.manifest):
+                raise DeployError(
+                    f"{self.manifest.display_name} is running: refusing to purge "
+                    "data it may be writing.\n"
+                    f"Stop it first (service.py stop, or your service manager), "
+                    "then purge -- or pass --force to purge anyway.")
+            # Removing files under /etc, /var/lib or /opt needs the same rights
+            # uninstall does. A dry-run only reads the plan, so it must never
+            # demand them -- otherwise the safe preview is harder to run than the
+            # destructive act.
+            self.check_privileges()
+
+        for category in selected:
+            self._purge_category(category, dry_run)
+
+        print("\nNothing was removed (--dry-run)." if dry_run else "\nPurge complete.")
+
+    def _select_purge(self, categories: tuple, ids: list, purge_all: bool) -> list:
+        """Turn the request into an ordered list of categories, or refuse clearly.
+
+        Guarded here as well as in the CLI: the core must not depend on its
+        caller having validated first. Every refusal names what is valid, so the
+        person sees the available categories rather than having to go read the
+        manifest.
+        """
+        available = ", ".join(self.manifest.purge_ids())
+        if purge_all and ids:
+            raise DeployError("purge takes either category ids or --all, not both.")
+        if purge_all:
+            return list(categories)
+        if not ids:
+            raise DeployError(
+                "Nothing to purge: name at least one category, or pass --all.\n"
+                f"Available: {available}")
+
+        by_id = {category.id: category for category in categories}
+        unknown = [i for i in ids if i not in by_id]
+        if unknown:
+            plural = "y" if len(unknown) == 1 else "ies"
+            raise DeployError(
+                f"Unknown purge categor{plural}: {', '.join(unknown)}.\n"
+                f"Available: {available}")
+
+        # Keep the order the person asked for, dropping repeats.
+        seen: set = set()
+        chosen = []
+        for i in ids:
+            if i not in seen:
+                seen.add(i)
+                chosen.append(by_id[i])
+        return chosen
+
+    def _purge_category(self, category, dry_run: bool) -> None:
+        mark = "  (destructive)" if category.destructive else ""
+        print(f"\n  {category.id} -- {category.label}{mark}")
+        if category.kind == "path":
+            self._purge_paths(category, dry_run)
+        else:
+            self._purge_command(category, dry_run)
+
+    def _purge_paths(self, category, dry_run: bool) -> None:
+        # An admin-relocatable path (from_config) overrides the default location
+        # when the config sets it. The override value is the target itself -- it
+        # is where the service writes, read from its own deployed config -- so no
+        # base-escape guard applies to it (unlike the default paths below, which
+        # must stay under the service's own base directory).
+        override = (self.manifest.deployed_config_value(category.from_config)
+                    if category.from_config else None)
+        if override:
+            targets = [Path(os.path.expandvars(override))]
+            self._purge_targets(targets, dry_run)
+            return
+
+        base = self.manifest.base_dir(category.base)
+        base_resolved = base.resolve()
+        targets = []
+        for rel in category.paths:
+            target = (base / os.path.expandvars(rel)).resolve()
+            # A category path names data UNDER the service's own base directory.
+            # A '..' that climbs out of it would turn a purge into a deletion of
+            # something this service does not own -- refused rather than run.
+            try:
+                target.relative_to(base_resolved)
+            except ValueError:
+                raise DeployError(
+                    f"purge path '{rel}' escapes {base}; refusing to remove it.")
+            targets.append(target)
+        self._purge_targets(targets, dry_run)
+
+    def _purge_targets(self, targets, dry_run: bool) -> None:
+        for target in targets:
+            if dry_run:
+                state = "would remove" if target.exists() else "absent"
+                print(f"      [{state}] {target}")
+            elif target.exists():
+                self._remove(target)
+            else:
+                print(f"      absent: {target}")
+
+    def _purge_command(self, category, dry_run: bool) -> None:
+        cmd = [self.manifest.resolve_purge_token(token) for token in category.command]
+        if dry_run:
+            if category.dry_run:
+                # The project said its command simulates, so pass --dry-run
+                # straight through: the real resolution path, minus the effect.
+                shown = cmd + ["--dry-run"]
+                print(f"      simulate: {' '.join(shown)}", flush=True)
+                subprocess.run(shown, check=False)
+            else:
+                # Honest by design: a command that cannot simulate is not run at
+                # all under --dry-run, and we say so rather than imply it did.
+                print("      cannot simulate: this category's command does not "
+                      "support --dry-run; nothing run.")
+            return
+        print(f"      run: {' '.join(cmd)}", flush=True)
+        result = subprocess.run(cmd, check=False)
+        if result.returncode != 0:
+            raise DeployError(
+                f"purge command for '{category.id}' failed "
+                f"({result.returncode}).")
 
     @staticmethod
     def _remove(path: Path) -> None:

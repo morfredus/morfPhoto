@@ -3,6 +3,18 @@
 Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/)
 et du [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [0.7.1] - 2026-08-17
+
+### Ajouté
+
+- **Déclaration de purge** dans `service.json` : la catégorie `database` (la base
+  d'indexation `photos.db`, sous `state_dir`) est désormais annonçée à morfDeploy,
+  donc effaçable par `service.py purge database` et `morf purge morfPhoto database`
+  (avec `--dry-run`). Emplacement fixe sous `$STATE_DIRECTORY`, purge de type
+  `path` sûre : les photos d'origine ne sont jamais touchées, seule la base d'index
+  (reconstructible par réindexation) est effacée. Aucun changement de code du
+  service : capacité déclarée, exécutée par le socle.
+
 ## [0.7.0] - 2026-08-17
 
 ### Ajouté

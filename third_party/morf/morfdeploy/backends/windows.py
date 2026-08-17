@@ -87,6 +87,23 @@ class WindowsBackend(ServiceBackend):
         )
         return result.returncode == 0
 
+    def is_active(self, manifest: Manifest) -> bool:
+        # "Clearly running", for the purge guard. An SCM service reports STATE
+        # RUNNING; a scheduled task reports Status "Running" while it executes.
+        # Anything else -- stopped, ready, access denied, absent -- is treated as
+        # not clearly running, so the guard never blocks on a doubt.
+        if self._strategy(manifest) == "scm":
+            result = subprocess.run(
+                ["sc.exe", "query", manifest.service_name],
+                capture_output=True, text=True, check=False,
+            )
+            return result.returncode == 0 and "RUNNING" in result.stdout
+        result = subprocess.run(
+            ["schtasks", "/Query", "/TN", manifest.service_name, "/V", "/FO", "LIST"],
+            capture_output=True, text=True, check=False,
+        )
+        return result.returncode == 0 and "Running" in result.stdout
+
     def status(self, manifest: Manifest) -> str:
         if self._strategy(manifest) == "scm":
             args = ["sc.exe", "query", manifest.service_name]

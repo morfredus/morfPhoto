@@ -92,6 +92,54 @@ class ConfigFile:
         return dest if dest.is_absolute() else config_dir / dest
 
 
+#: The three directories a service owns, named the same way in service.json's
+#: `base` field as they are in the manifest. A purge category says which of them
+#: its data sits under rather than repeating an absolute path that would then
+#: have to track the platform.
+PURGE_BASES = ("state", "config", "app")
+
+
+@dataclass(frozen=True)
+class PurgeCategory:
+    """One named class of data a project knows how to erase.
+
+    The identifier is FREE, not an enum: a project may announce `database`,
+    `cache`, `thumbnails`, `sync-state` or anything else tomorrow without
+    morfdeploy or morfTools changing. The contract is only that the project
+    declares, for each category, a human label, whether erasing it loses real
+    data (`destructive`), and HOW it is erased -- so morfdeploy executes a
+    stated intention and never has to know where a service keeps its SQLite.
+
+    Two kinds of erasure, because the parc has both:
+
+      - "path"    remove files or directories, resolved under `base`
+                  (state / config / app). morfdeploy does the removal; a
+                  dry-run lists the real paths. Always simulatable.
+      - "command" run the project's OWN purge entry point (a category that is
+                  part of a shared database, say, which a path cannot express).
+                  morfdeploy only forwards the intention. It can be simulated
+                  only if the project says its command honours --dry-run
+                  (`dry_run: true`); otherwise a dry-run reports that this
+                  category cannot be simulated rather than pretending it can.
+    """
+
+    id: str
+    label: str
+    destructive: bool = False
+    kind: str = "path"          # "path" | "command" (JSON key: "type")
+    paths: tuple = ()           # kind == "path": default location, under `base`
+    base: str = "state"         # kind == "path": state | config | app
+    #: kind == "path": a dotted key into the DEPLOYED config whose value, when
+    #: set, OVERRIDES the default location -- for data a project lets the admin
+    #: relocate (morfCollector's vault_root / storage_root). When the key is
+    #: absent or empty, the default `base`/`paths` applies. This is how a purge
+    #: stays honest for a configurable path: the project declares where to read
+    #: the real location, morfdeploy reads it, and neither has to guess.
+    from_config: str = ""
+    command: tuple = ()         # kind == "command"
+    dry_run: bool = False       # kind == "command": does the command support --dry-run?
+
+
 @dataclass(frozen=True)
 class Manifest:
     """A project's deployment facts."""
@@ -106,6 +154,12 @@ class Manifest:
     configs: tuple = ()
     description: str = ""
     status_url: str = ""
+
+    #: Purgeable data categories this project announces. Empty is the norm and
+    #: means exactly what it did before this field existed: nothing to purge
+    #: selectively. A category here is what makes `service.py purge <id>`
+    #: possible at all.
+    purge_categories: tuple = ()
 
     #: Places an earlier convention installed this binary. Reported at install,
     #: never deleted: removing an executable nobody asked us to remove is not a
@@ -207,6 +261,74 @@ class Manifest:
     def installed_binary(self) -> Path:
         return self.app_dir() / self.binary_name()
 
+    # -- Purge ------------------------------------------------------------
+
+    def base_dir(self, base: str) -> Path:
+        """Resolve a purge category's `base` to the directory it names.
+
+        The three bases are the three directories a service owns, so a category
+        never repeats an absolute path that would then have to track the
+        platform on its own. Anything else is a manifest error, caught here
+        rather than as a mysterious deletion under the wrong root.
+        """
+        if base == "state":
+            return self.state_dir()
+        if base == "config":
+            return self.config_dir()
+        if base == "app":
+            return self.app_dir()
+        raise ManifestError(
+            f"purge category base '{base}' is not one of {', '.join(PURGE_BASES)}.")
+
+    def purge_ids(self) -> tuple:
+        """The identifiers, in declaration order, for messages and validation."""
+        return tuple(category.id for category in self.purge_categories)
+
+    def deployed_config_value(self, dotted_key: str):
+        """Read a value from the service's DEPLOYED config, or None if unavailable.
+
+        Used to resolve a purge path a project lets the admin relocate: the
+        project names the key, morfdeploy reads the config actually on this
+        machine. Returns None when the config is not deployed, the key is absent,
+        or the value is empty -- every "fall back to the default location" case,
+        which the caller treats identically. Reads the service's own (first)
+        config; the shared parc file, listed after it, is never the source of a
+        service's data path.
+        """
+        if not self.configs:
+            return None
+        dest = self.configs[0].resolved_dest(self.config_dir())
+        if not dest.is_file():
+            return None
+        try:
+            data = json.loads(dest.read_text(encoding="utf-8-sig"))
+        except (OSError, ValueError):
+            return None
+        cursor = data
+        for part in dotted_key.split("."):
+            if not isinstance(cursor, dict) or part not in cursor:
+                return None
+            cursor = cursor[part]
+        if isinstance(cursor, str) and cursor.strip():
+            return cursor.strip()
+        return None
+
+    def resolve_purge_token(self, token: str) -> str:
+        """Substitute the placeholders a `command` category may use.
+
+        A project states its purge command without hard-coding this machine's
+        paths: __BINARY__ becomes the installed executable, and the three owned
+        directories are available too. The service keeps the knowledge of what
+        to run; the manifest only fills in where things landed on this host.
+        """
+        replacements = {
+            "__BINARY__": str(self.installed_binary()),
+            "__STATE_DIR__": str(self.state_dir()),
+            "__CONFIG_DIR__": str(self.config_dir()),
+            "__APP_DIR__": str(self.app_dir()),
+        }
+        return replacements.get(token, token)
+
     # -- Loading ----------------------------------------------------------
 
     @classmethod
@@ -238,6 +360,8 @@ class Manifest:
             if entry.get("source") and entry.get("dest")
         )
 
+        purge_categories = cls._parse_purge(path, raw.get("purge", []))
+
         return cls(
             repo_root=repo_root,
             service_name=raw["service_name"],
@@ -250,4 +374,65 @@ class Manifest:
             description=raw.get("description", ""),
             status_url=raw.get("status_url", ""),
             legacy_binaries=tuple(raw.get("legacy_binaries", ())),
+            purge_categories=purge_categories,
         )
+
+    @staticmethod
+    def _parse_purge(path: Path, raw_list: object) -> tuple:
+        """Read and VALIDATE the purge block, refusing an unusable declaration.
+
+        A malformed purge category is rejected at load time, with the service
+        named, rather than surfacing later as a wrong deletion or a silent
+        no-op. The identifier is free, but everything the executor relies on --
+        a kind it understands, the paths or command that kind needs, a base it
+        can resolve -- is checked here so `purge` can trust the manifest.
+        """
+        if not isinstance(raw_list, list):
+            raise ManifestError(f"{path}: 'purge' must be a list of categories.")
+
+        categories = []
+        seen = set()
+        for entry in raw_list:
+            if not isinstance(entry, dict):
+                raise ManifestError(f"{path}: each 'purge' entry must be an object.")
+            cid = entry.get("id")
+            if not cid or not isinstance(cid, str):
+                raise ManifestError(f"{path}: a 'purge' category has no 'id'.")
+            if cid in seen:
+                raise ManifestError(f"{path}: duplicate purge category '{cid}'.")
+            seen.add(cid)
+
+            label = entry.get("label") or cid
+            kind = entry.get("type", "path")
+            destructive = bool(entry.get("destructive", False))
+
+            if kind == "path":
+                paths = tuple(entry.get("paths", ()))
+                if not paths:
+                    raise ManifestError(
+                        f"{path}: purge category '{cid}' is type 'path' but lists no 'paths'.")
+                base = entry.get("base", "state")
+                if base not in PURGE_BASES:
+                    raise ManifestError(
+                        f"{path}: purge category '{cid}' has base '{base}', "
+                        f"not one of {', '.join(PURGE_BASES)}.")
+                categories.append(PurgeCategory(
+                    id=cid, label=label, destructive=destructive,
+                    kind="path", paths=paths, base=base,
+                    from_config=entry.get("from_config", "")))
+            elif kind == "command":
+                command = tuple(entry.get("command", ()))
+                if not command:
+                    raise ManifestError(
+                        f"{path}: purge category '{cid}' is type 'command' but "
+                        f"lists no 'command'.")
+                categories.append(PurgeCategory(
+                    id=cid, label=label, destructive=destructive,
+                    kind="command", command=command,
+                    dry_run=bool(entry.get("dry_run", False))))
+            else:
+                raise ManifestError(
+                    f"{path}: purge category '{cid}' has unknown type '{kind}' "
+                    f"(expected 'path' or 'command').")
+
+        return tuple(categories)

@@ -62,6 +62,17 @@ class SystemdBackend(ServiceBackend):
     def is_installed(self, manifest: Manifest) -> bool:
         return self._unit_path(manifest).is_file()
 
+    def is_active(self, manifest: Manifest) -> bool:
+        # `systemctl is-active --quiet` exits 0 only when the unit is running.
+        # Any other outcome (inactive, failed, unknown, or not queryable) is
+        # treated as "not clearly running", so the purge guard never blocks on a
+        # doubt -- it only catches the unambiguous case.
+        result = subprocess.run(
+            ["systemctl", "is-active", "--quiet", manifest.service_name],
+            capture_output=True, check=False,
+        )
+        return result.returncode == 0
+
     def status(self, manifest: Manifest) -> str:
         result = subprocess.run(
             ["systemctl", "--no-pager", "--lines=0", "status", manifest.service_name],

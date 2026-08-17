@@ -40,6 +40,17 @@ class ServiceBackend(abc.ABC):
     def is_installed(self, manifest: Manifest) -> bool:
         """True when the service is registered with the system."""
 
+    def is_active(self, manifest: Manifest) -> bool:
+        """True when the service is not merely installed but currently RUNNING.
+
+        The purge guard uses it: erasing data a live service is still writing to
+        can corrupt it. The default is False on purpose -- a backend that cannot
+        tell must not block a purge on a guess. The guard is a net for the clear
+        "it is running" case, and --force overrides it when the caller knows the
+        service is stopped (or accepts the risk).
+        """
+        return False
+
     def can_query_installation(self, manifest: Manifest) -> bool:
         """True when this process may ask the system what is registered.
 
