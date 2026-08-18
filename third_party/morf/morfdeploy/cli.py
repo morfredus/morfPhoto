@@ -26,7 +26,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "action",
         choices=("install", "update", "uninstall", "status", "is-installed",
-                 "config", "purge", "deps"),
+                 "config", "purge", "deps", "build-deps"),
         help="What to do",
     )
     parser.add_argument(
@@ -104,15 +104,17 @@ def main(argv: list | None = None) -> int:
     if args.all_categories and args.action != "purge":
         print("--all only applies to 'purge'.", file=sys.stderr)
         return 2
-    if args.list_categories and args.action not in ("purge", "deps"):
-        print("--list only applies to 'purge' and 'deps'.", file=sys.stderr)
-        return 2
-    if args.dry_run and args.action not in ("purge", "uninstall", "deps"):
-        print("--dry-run only applies to 'purge', 'uninstall' and 'deps'.",
+    if args.list_categories and args.action not in ("purge", "deps", "build-deps"):
+        print("--list only applies to 'purge', 'deps' and 'build-deps'.",
               file=sys.stderr)
         return 2
-    if args.assume_yes and args.action not in ("install", "deps"):
-        print("--yes only applies to 'install' and 'deps'.", file=sys.stderr)
+    if args.dry_run and args.action not in ("purge", "uninstall", "deps", "build-deps"):
+        print("--dry-run only applies to 'purge', 'uninstall', 'deps' and "
+              "'build-deps'.", file=sys.stderr)
+        return 2
+    if args.assume_yes and args.action not in ("install", "deps", "build-deps"):
+        print("--yes only applies to 'install', 'deps' and 'build-deps'.",
+              file=sys.stderr)
         return 2
 
     # `config` takes at most one positional, and only merge/push. Validated here
@@ -201,6 +203,29 @@ def main(argv: list | None = None) -> int:
         print(json.dumps(catalog, ensure_ascii=True))
         return 0
 
+    # build-deps discovery: the libraries needed to compile, resolved against the
+    # current machine (which package manager, which packages present).
+    if args.action == "build-deps" and args.list_categories:
+        import json
+        from . import builddeps
+        family, manager = detect_package_manager()
+        statuses = builddeps.resolve(manifest.build_dependencies, family, manager)
+        catalog = {
+            "service": manifest.service_name,
+            "display_name": manifest.display_name,
+            "family": family,
+            "manager": manager,
+            "build_dependencies": [
+                {"id": s.dep.id, "required": s.dep.required,
+                 "known": s.known, "packages": list(s.packages),
+                 "resolvable": s.resolvable, "missing": list(s.missing),
+                 "satisfied": s.satisfied}
+                for s in statuses
+            ],
+        }
+        print(json.dumps(catalog, ensure_ascii=True))
+        return 0
+
     # `status` must work on an unsupported platform: refusing to even report
     # what is installed would be unhelpful where being honest is the point.
     # `is-installed` answers the same question, and an unsupported platform
@@ -220,6 +245,9 @@ def main(argv: list | None = None) -> int:
         elif args.action == "deps":
             deployer.ensure_dependencies(dry_run=args.dry_run,
                                          assume_yes=args.assume_yes)
+        elif args.action == "build-deps":
+            deployer.ensure_build_dependencies(dry_run=args.dry_run,
+                                               assume_yes=args.assume_yes)
         elif args.action == "update":
             deployer.update(force=args.force)
         elif args.action == "config":

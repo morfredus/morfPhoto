@@ -41,6 +41,35 @@ from ..activity import emit_build_activity
 from ..manifest import Manifest
 from .base import ServiceBackend
 
+
+def _mingw_toolchain_overrides() -> list:
+    """CMake -D flags for the MinGW/Qt toolchain actually present on this machine.
+
+    A project's `mingw` preset pins one box's MSYS2 paths (ninja, g++, the Qt
+    prefix) as absolute cache variables. On another Windows machine -- the
+    official Qt toolchain under C:/Qt, MSYS2 absent -- those paths do not exist
+    and the pinned `ninja.exe` fails with "no such file". Detect what is on the
+    PATH/env here and override the pins. Empty when nothing is found: the build
+    then proceeds on the preset's own values, no worse than before, so this is a
+    pure improvement rather than a new failure mode.
+    """
+    overrides = []
+    ninja = shutil.which("ninja")
+    if ninja:
+        overrides.append(f"-DCMAKE_MAKE_PROGRAM={ninja}")
+    cxx = shutil.which("g++") or shutil.which("c++")
+    if cxx:
+        overrides.append(f"-DCMAKE_CXX_COMPILER={cxx}")
+        cc = shutil.which("gcc") or shutil.which("cc")
+        if cc:
+            overrides.append(f"-DCMAKE_C_COMPILER={cc}")
+    if not (os.environ.get("CMAKE_PREFIX_PATH") or os.environ.get("Qt6_DIR")):
+        qmake = shutil.which("qmake6") or shutil.which("qmake")
+        if qmake:
+            prefix = Path(qmake).resolve().parent.parent
+            overrides.append(f"-DCMAKE_PREFIX_PATH={prefix}")
+    return overrides
+
 #: Wrappers that implement the SCM handshake for an ordinary executable.
 WRAPPERS = ("winsw", "nssm")
 
@@ -434,13 +463,17 @@ class WindowsBackend(ServiceBackend):
         the same user, so the build tree keeps ordinary ownership."""
         # Signale la compilation au domaine Monitor de morfAnalytics (best-effort ;
         # emise meme sur echec, puis l'exception remonte normalement).
+        # Adapt the pinned mingw preset to this machine's real toolchain (see
+        # _mingw_toolchain_overrides). List form, no shell: paths with spaces need
+        # no quoting, and there is nothing for a shell to mis-parse.
+        overrides = _mingw_toolchain_overrides() if preset in ("mingw", "windows") else []
         start = time.time()
         ok = False
         try:
-            subprocess.run(
-                f"cmake --preset {preset} && cmake --build --preset {preset}",
-                cwd=repo_root, shell=True, check=True,
-            )
+            subprocess.run(["cmake", "--preset", preset, *overrides],
+                           cwd=repo_root, check=True)
+            subprocess.run(["cmake", "--build", "--preset", preset],
+                           cwd=repo_root, check=True)
             ok = True
         finally:
             emit_build_activity(repo_root, preset, start, time.time(), ok)

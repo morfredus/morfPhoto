@@ -172,6 +172,23 @@ class SystemDependency:
 
 
 @dataclass(frozen=True)
+class BuildDependency:
+    """A library a project needs to COMPILE, declared as a logical need.
+
+    Distinct from SystemDependency (which a service needs to RUN): this one is
+    required at build time (headers/libs a `find_package` looks for). The project
+    names the need by a logical id -- "openssl", "libssh2" -- never a package or a
+    package manager. morfDeploy maps the id to the right package for the platform
+    (see builddeps.py) and resolves it BEFORE the build, so a missing library is a
+    clear stop rather than a cryptic CMake `find_package` failure fifteen projects
+    deep.
+    """
+
+    id: str
+    required: bool = True
+
+
+@dataclass(frozen=True)
 class Manifest:
     """A project's deployment facts."""
 
@@ -195,6 +212,10 @@ class Manifest:
     #: System packages this project needs, declared as needs. Empty means no
     #: declared system dependency: install/deploy behave exactly as before.
     system_dependencies: tuple = ()
+
+    #: Libraries this project needs to COMPILE, by logical id. Empty means none
+    #: declared: the build behaves exactly as before.
+    build_dependencies: tuple = ()
 
     #: Places an earlier convention installed this binary. Reported at install,
     #: never deleted: removing an executable nobody asked us to remove is not a
@@ -398,6 +419,8 @@ class Manifest:
         purge_categories = cls._parse_purge(path, raw.get("purge", []))
         system_dependencies = cls._parse_system_deps(
             path, raw.get("system_dependencies", []))
+        build_dependencies = cls._parse_build_deps(
+            path, raw.get("build_dependencies", []))
 
         return cls(
             repo_root=repo_root,
@@ -413,7 +436,34 @@ class Manifest:
             legacy_binaries=tuple(raw.get("legacy_binaries", ())),
             purge_categories=purge_categories,
             system_dependencies=system_dependencies,
+            build_dependencies=build_dependencies,
         )
+
+    @staticmethod
+    def _parse_build_deps(path: Path, raw_list: object) -> tuple:
+        """Read and validate build_dependencies: a list of {id, required?}.
+
+        Only the logical id and whether it is required live here; the package
+        that provides it per platform is morfDeploy's business, not the project's.
+        """
+        if not isinstance(raw_list, list):
+            raise ManifestError(f"{path}: 'build_dependencies' must be a list.")
+        deps = []
+        seen = set()
+        for entry in raw_list:
+            if not isinstance(entry, dict):
+                raise ManifestError(
+                    f"{path}: each 'build_dependencies' entry must be an object.")
+            did = entry.get("id")
+            if not did or not isinstance(did, str):
+                raise ManifestError(
+                    f"{path}: a 'build_dependencies' entry has no 'id'.")
+            if did in seen:
+                raise ManifestError(f"{path}: duplicate build dependency '{did}'.")
+            seen.add(did)
+            deps.append(BuildDependency(
+                id=did, required=bool(entry.get("required", True))))
+        return tuple(deps)
 
     @staticmethod
     def _parse_system_deps(path: Path, raw_list: object) -> tuple:

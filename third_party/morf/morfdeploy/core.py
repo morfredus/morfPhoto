@@ -22,6 +22,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from . import builddeps
 from .backends import ServiceBackend, select
 from .manifest import Manifest
 from .sysdeps import detect_package_manager, install_command, resolve
@@ -404,6 +405,9 @@ class Deployer:
         # a -dev needed to compile a driver) must stop here with a clear message,
         # not surface as a cryptic build error later. Optional ones only warn.
         self.ensure_dependencies(assume_yes=assume_yes)
+        # Build libraries too, before compiling: a missing OpenSSL should stop
+        # here with a clear message, not as a find_package failure mid-build.
+        self.ensure_build_dependencies(assume_yes=assume_yes)
         binary = self.ensure_binary(rebuild=rebuild)
         self.stop_existing()
         written = self.install_files(binary, app_dir, self.manifest.config_dir())
@@ -793,6 +797,120 @@ class Deployer:
         if still_required:
             raise DeployError(
                 "a required dependency is still missing after installation.")
+        return True
+
+    # -- Build dependencies ----------------------------------------------
+
+    def build_dependency_statuses(self):
+        """(family, manager, [BuildDepStatus]) for the declared build deps."""
+        family, manager = detect_package_manager()
+        return family, manager, builddeps.resolve(
+            self.manifest.build_dependencies, family, manager)
+
+    def ensure_build_dependencies(self, dry_run: bool = False,
+                                  assume_yes: bool = False) -> bool:
+        """Resolve the libraries needed to COMPILE, before the build starts.
+
+        Same honesty as system dependencies: never silent, dry-run shows the plan,
+        only the mapped packages are touched. Where no package manager serves the
+        current toolchain (the official Qt MinGW on Windows), it cannot verify or
+        install, so it ANNOUNCES the needs and lets the build's own find_package be
+        the last word -- it never blocks a build that might succeed with a library
+        present in a way it cannot detect. On a platform with a manager, a missing
+        required library is installed (with validation) or stops the build.
+        """
+        deps = self.manifest.build_dependencies
+        if not deps:
+            return True
+
+        family, manager = detect_package_manager()
+        statuses = builddeps.resolve(deps, family, manager)
+        missing = [s for s in statuses if s.resolvable and s.missing]
+        gaps = [s for s in statuses
+                if s.dep.required and (not s.resolvable)]
+        if not missing and not gaps:
+            return True
+
+        print("Build dependencies:")
+        for status in statuses:
+            kind = "required" if status.dep.required else "optional"
+            if not status.known:
+                print(f"  {status.dep.id} [{kind}]: unknown (no packaging rule)")
+            elif not status.packages:
+                print(f"  {status.dep.id} [{kind}]: no package for this platform")
+            elif status.missing:
+                print(f"  {status.dep.id} [{kind}]: missing {', '.join(status.missing)}")
+            else:
+                print(f"  {status.dep.id} [{kind}]: present")
+
+        if dry_run:
+            for status in missing:
+                cmd = install_command(manager, list(status.missing))
+                if cmd:
+                    print(f"      would run: {' '.join(cmd)}")
+            print("\nNo package was installed (--dry-run).")
+            return True
+
+        # No package manager for this toolchain: announce, do not block. The
+        # library may be present in a way we cannot detect; the build's own
+        # find_package is the honest last word.
+        if manager is None:
+            required = [s.dep.id for s in statuses if s.dep.required]
+            print("  no package manager for this toolchain: build libraries cannot "
+                  "be verified or installed here.")
+            if required:
+                print(f"  ensure these are available to your toolchain: "
+                      f"{', '.join(required)}")
+                print("  the build will confirm; install a compatible version if "
+                      "it fails.")
+            return True
+
+        # A required dependency the registry cannot map, on a platform that HAS a
+        # manager, is a real gap: announce and stop.
+        unmapped = [s for s in statuses
+                    if s.dep.required and (not s.known or not s.packages)]
+        if unmapped:
+            for status in unmapped:
+                print(f"  no package known for required '{status.dep.id}' here.",
+                      file=sys.stderr)
+            raise DeployError("a required build dependency cannot be resolved here.")
+
+        if not missing:
+            return True
+
+        packages = []
+        for status in missing:
+            packages += list(status.missing)
+        has_required = any(s.dep.required for s in missing)
+
+        if not assume_yes:
+            if sys.stdin and sys.stdin.isatty():
+                reply = input("\nInstall the missing build libraries now? [Y/n] ")
+                if reply.strip().lower() in ("n", "no", "non"):
+                    if has_required:
+                        raise DeployError("required build dependency declined; aborting.")
+                    print("  optional build dependencies left uninstalled.")
+                    return True
+            elif has_required:
+                raise DeployError(
+                    "required build dependency missing; re-run with --yes to "
+                    "install it, or install the package manually.")
+            else:
+                print("  optional build dependencies missing; re-run with --yes.")
+                return True
+
+        cmd = install_command(manager, packages)
+        if hasattr(os, "geteuid") and os.geteuid() != 0:
+            raise DeployError(
+                "installing build libraries needs root; re-run under sudo.\n"
+                f"  {' '.join(cmd)}")
+        print(f"\nInstalling: {' '.join(cmd)}")
+        if subprocess.run(cmd, check=False).returncode != 0:
+            raise DeployError("the build-dependency installation failed.")
+        after = builddeps.resolve(deps, family, manager)
+        if any(s.dep.required and s.missing for s in after):
+            raise DeployError(
+                "a required build dependency is still missing after installation.")
         return True
 
     # -- Purge ------------------------------------------------------------
