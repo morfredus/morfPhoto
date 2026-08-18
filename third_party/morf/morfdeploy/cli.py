@@ -15,6 +15,7 @@ from pathlib import Path
 from .backends import select
 from .core import DeployError, Deployer
 from .manifest import Manifest, ManifestError
+from .sysdeps import detect_package_manager, resolve
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -25,7 +26,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "action",
         choices=("install", "update", "uninstall", "status", "is-installed",
-                 "config", "purge"),
+                 "config", "purge", "deps"),
         help="What to do",
     )
     parser.add_argument(
@@ -45,14 +46,21 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="purge/uninstall: show what would be removed without removing anything",
+        help="purge/uninstall/deps: show what would be done without doing it",
     )
     parser.add_argument(
         "--list",
         action="store_true",
         dest="list_categories",
-        help="purge: print the declared categories as JSON and exit "
-             "(discovery for an orchestrator; removes nothing)",
+        help="purge/deps: print the declared items as JSON and exit "
+             "(discovery for an orchestrator; changes nothing)",
+    )
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        dest="assume_yes",
+        help="install/deps: authorise installing missing system packages "
+             "non-interactively (never silent without it)",
     )
     parser.add_argument(
         "--repo",
@@ -93,11 +101,18 @@ def main(argv: list | None = None) -> int:
     # Options that belong to a single action are refused elsewhere rather than
     # silently ignored: an option the person typed and that did nothing is how
     # they end up trusting an effect that never happened.
-    if (args.all_categories or args.list_categories) and args.action != "purge":
-        print("--all and --list only apply to 'purge'.", file=sys.stderr)
+    if args.all_categories and args.action != "purge":
+        print("--all only applies to 'purge'.", file=sys.stderr)
         return 2
-    if args.dry_run and args.action not in ("purge", "uninstall"):
-        print("--dry-run only applies to 'purge' and 'uninstall'.", file=sys.stderr)
+    if args.list_categories and args.action not in ("purge", "deps"):
+        print("--list only applies to 'purge' and 'deps'.", file=sys.stderr)
+        return 2
+    if args.dry_run and args.action not in ("purge", "uninstall", "deps"):
+        print("--dry-run only applies to 'purge', 'uninstall' and 'deps'.",
+              file=sys.stderr)
+        return 2
+    if args.assume_yes and args.action not in ("install", "deps"):
+        print("--yes only applies to 'install' and 'deps'.", file=sys.stderr)
         return 2
 
     # `config` takes at most one positional, and only merge/push. Validated here
@@ -160,6 +175,32 @@ def main(argv: list | None = None) -> int:
         print(json.dumps(catalog, ensure_ascii=True))
         return 0
 
+    # deps discovery: like purge --list, answered from the manifest plus a
+    # read-only look at the machine (which package manager, which packages
+    # present). No backend, no privileges; succeeds on any platform.
+    if args.action == "deps" and args.list_categories:
+        import json
+        family, manager = detect_package_manager()
+        statuses = resolve(manifest.system_dependencies, family, manager)
+        catalog = {
+            "service": manifest.service_name,
+            "display_name": manifest.display_name,
+            "family": family,
+            "manager": manager,
+            "dependencies": [
+                {"id": s.dep.id, "label": s.dep.label,
+                 "required": s.dep.required,
+                 "required_for": list(s.dep.required_for),
+                 "packages": list(s.packages),
+                 "resolvable": s.resolvable,
+                 "missing": list(s.missing),
+                 "satisfied": s.satisfied}
+                for s in statuses
+            ],
+        }
+        print(json.dumps(catalog, ensure_ascii=True))
+        return 0
+
     # `status` must work on an unsupported platform: refusing to even report
     # what is installed would be unhelpful where being honest is the point.
     # `is-installed` answers the same question, and an unsupported platform
@@ -175,7 +216,10 @@ def main(argv: list | None = None) -> int:
     try:
         deployer = Deployer(manifest)
         if args.action == "install":
-            deployer.install(rebuild=args.rebuild)
+            deployer.install(rebuild=args.rebuild, assume_yes=args.assume_yes)
+        elif args.action == "deps":
+            deployer.ensure_dependencies(dry_run=args.dry_run,
+                                         assume_yes=args.assume_yes)
         elif args.action == "update":
             deployer.update(force=args.force)
         elif args.action == "config":

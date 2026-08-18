@@ -136,8 +136,39 @@ class PurgeCategory:
     #: stays honest for a configurable path: the project declares where to read
     #: the real location, morfdeploy reads it, and neither has to guess.
     from_config: str = ""
+    #: How to read the from_config value:
+    #:   "path" (default) -- the value IS the target (a full path that replaces
+    #:           base/paths). Fits a key that names the data itself (a vault dir).
+    #:   "dir"  -- the value is a PARENT directory; `paths` are joined onto it,
+    #:           and the fallback directory is base/`default_dir`. Fits a key that
+    #:           names a directory holding named files (a cache dir with one
+    #:           sqlite per history).
+    from_config_kind: str = "path"
+    #: kind == "path", from_config_kind == "dir": the fallback directory under
+    #: `base` when the config key is absent (e.g. the default of a cache_dir).
+    default_dir: str = ""
     command: tuple = ()         # kind == "command"
     dry_run: bool = False       # kind == "command": does the command support --dry-run?
+
+
+@dataclass(frozen=True)
+class SystemDependency:
+    """A system package a project needs, declared as a NEED, not a mechanism.
+
+    The project states what a capability requires ("the LD2410C driver needs Qt
+    SerialPort") and which package provides it per distribution family. It never
+    states how to install it -- that is morfDeploy's job, which detects the
+    platform's package manager and resolves the right package. `required` False
+    means an optional capability: its absence disables that capability but never
+    blocks the rest (morfSensor's radar driver, morfPhoto's exiftool). `required`
+    True means the component cannot run correctly without it.
+    """
+
+    id: str
+    label: str
+    required: bool = False
+    required_for: tuple = ()          # capabilities this dependency enables
+    packages: dict = field(default_factory=dict)   # {"debian": [...], "fedora": [...]}
 
 
 @dataclass(frozen=True)
@@ -160,6 +191,10 @@ class Manifest:
     #: selectively. A category here is what makes `service.py purge <id>`
     #: possible at all.
     purge_categories: tuple = ()
+
+    #: System packages this project needs, declared as needs. Empty means no
+    #: declared system dependency: install/deploy behave exactly as before.
+    system_dependencies: tuple = ()
 
     #: Places an earlier convention installed this binary. Reported at install,
     #: never deleted: removing an executable nobody asked us to remove is not a
@@ -361,6 +396,8 @@ class Manifest:
         )
 
         purge_categories = cls._parse_purge(path, raw.get("purge", []))
+        system_dependencies = cls._parse_system_deps(
+            path, raw.get("system_dependencies", []))
 
         return cls(
             repo_root=repo_root,
@@ -375,7 +412,52 @@ class Manifest:
             status_url=raw.get("status_url", ""),
             legacy_binaries=tuple(raw.get("legacy_binaries", ())),
             purge_categories=purge_categories,
+            system_dependencies=system_dependencies,
         )
+
+    @staticmethod
+    def _parse_system_deps(path: Path, raw_list: object) -> tuple:
+        """Read and validate the system_dependencies block.
+
+        A malformed declaration is rejected at load time with the service named,
+        so the resolver can trust it. `packages` must map a distribution family
+        to a list of package names; an entry that declares none is refused rather
+        than silently doing nothing.
+        """
+        if not isinstance(raw_list, list):
+            raise ManifestError(
+                f"{path}: 'system_dependencies' must be a list.")
+        deps = []
+        seen = set()
+        for entry in raw_list:
+            if not isinstance(entry, dict):
+                raise ManifestError(
+                    f"{path}: each 'system_dependencies' entry must be an object.")
+            did = entry.get("id")
+            if not did or not isinstance(did, str):
+                raise ManifestError(
+                    f"{path}: a 'system_dependencies' entry has no 'id'.")
+            if did in seen:
+                raise ManifestError(
+                    f"{path}: duplicate system dependency '{did}'.")
+            seen.add(did)
+            packages = entry.get("packages", {})
+            if not isinstance(packages, dict) or not packages:
+                raise ManifestError(
+                    f"{path}: system dependency '{did}' declares no 'packages'.")
+            for family, names in packages.items():
+                if not isinstance(names, list) or not names:
+                    raise ManifestError(
+                        f"{path}: system dependency '{did}', family '{family}' "
+                        "lists no package.")
+            deps.append(SystemDependency(
+                id=did,
+                label=entry.get("label") or did,
+                required=bool(entry.get("required", False)),
+                required_for=tuple(entry.get("required_for", ())),
+                packages={k: tuple(v) for k, v in packages.items()},
+            ))
+        return tuple(deps)
 
     @staticmethod
     def _parse_purge(path: Path, raw_list: object) -> tuple:
@@ -416,10 +498,17 @@ class Manifest:
                     raise ManifestError(
                         f"{path}: purge category '{cid}' has base '{base}', "
                         f"not one of {', '.join(PURGE_BASES)}.")
+                fc_kind = entry.get("from_config_kind", "path")
+                if fc_kind not in ("path", "dir"):
+                    raise ManifestError(
+                        f"{path}: purge category '{cid}' has from_config_kind "
+                        f"'{fc_kind}', expected 'path' or 'dir'.")
                 categories.append(PurgeCategory(
                     id=cid, label=label, destructive=destructive,
                     kind="path", paths=paths, base=base,
-                    from_config=entry.get("from_config", "")))
+                    from_config=entry.get("from_config", ""),
+                    from_config_kind=fc_kind,
+                    default_dir=entry.get("default_dir", "")))
             elif kind == "command":
                 command = tuple(entry.get("command", ()))
                 if not command:

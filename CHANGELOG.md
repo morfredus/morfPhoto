@@ -3,6 +3,17 @@
 Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/)
 et du [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [0.7.2] - 2026-08-18
+
+### Ajouté
+
+- **Déclaration de dépendance système** dans `service.json` : `exiftool` (paquet
+  Debian `libimage-exiftool-perl`), **optionnelle**, `required_for` la capacité
+  `exif`. morfDeploy 0.7.0 la détecte et propose de l'installer lors de
+  `deploy`/`install` ; sans elle, morfPhoto indexe mais les métadonnées EXIF
+  restent vides jusqu'à installation + réindexation. Formalise le prérequis
+  connu. Aucun changement de code du service.
+
 ## [0.7.1] - 2026-08-17
 
 ### Ajouté

@@ -41,5 +41,15 @@
       "base": "state",
       "paths": ["photos.db"]
     }
+  ],
+  "_comment_system_dependencies": "exiftool est une dependance OPTIONNELLE : morfPhoto indexe sans elle, mais les metadonnees EXIF (boitiers, objectifs, annees) restent vides tant qu'elle n'est pas installee, puis une reindexation complete les remplit. morfDeploy proposera de l'installer lors de deploy/install ; refus possible (capacite EXIF indisponible).",
+  "system_dependencies": [
+    {
+      "id": "exiftool",
+      "label": "exiftool",
+      "required_for": ["exif"],
+      "packages": { "debian": ["libimage-exiftool-perl"] },
+      "required": false
+    }
   ]
 }

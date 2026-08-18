@@ -19,10 +19,12 @@ import os
 import platform
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 from .backends import ServiceBackend, select
 from .manifest import Manifest
+from .sysdeps import detect_package_manager, install_command, resolve
 
 
 class DeployError(RuntimeError):
@@ -387,7 +389,7 @@ class Deployer:
 
     # -- Whole operations -------------------------------------------------
 
-    def install(self, rebuild: bool = False) -> None:
+    def install(self, rebuild: bool = False, assume_yes: bool = False) -> None:
         app_dir = self.manifest.app_dir()
         print(f"Installing {self.manifest.display_name} ({self.backend.name})")
         print(f"  user:   {invoking_user()}")
@@ -398,6 +400,10 @@ class Deployer:
         print()
 
         self.check_privileges()
+        # System dependencies BEFORE the build: a missing required package (e.g.
+        # a -dev needed to compile a driver) must stop here with a clear message,
+        # not surface as a cryptic build error later. Optional ones only warn.
+        self.ensure_dependencies(assume_yes=assume_yes)
         binary = self.ensure_binary(rebuild=rebuild)
         self.stop_existing()
         written = self.install_files(binary, app_dir, self.manifest.config_dir())
@@ -675,6 +681,120 @@ class Deployer:
             self._remove(config_dir)
         print("\nService and configuration removed.")
 
+    # -- System dependencies ---------------------------------------------
+
+    def dependency_statuses(self):
+        """(family, manager, [DepStatus]) for the declared system dependencies."""
+        family, manager = detect_package_manager()
+        return family, manager, resolve(self.manifest.system_dependencies,
+                                        family, manager)
+
+    def _print_dep_status(self, statuses, family) -> None:
+        for status in statuses:
+            dep = status.dep
+            kind = "required" if dep.required else "optional"
+            where = f" (for {', '.join(dep.required_for)})" if dep.required_for else ""
+            if not status.resolvable:
+                print(f"  {dep.label} [{kind}]{where}: no package declared for "
+                      "this platform")
+            elif status.missing:
+                print(f"  {dep.label} [{kind}]{where}: missing "
+                      f"{', '.join(status.missing)}")
+            else:
+                print(f"  {dep.label} [{kind}]{where}: present")
+
+    def ensure_dependencies(self, dry_run: bool = False,
+                            assume_yes: bool = False) -> bool:
+        """Detect, present, (validate), install and verify system dependencies.
+
+        Never installs silently: a dry-run only shows the plan, a real run asks
+        (or takes --yes), and only the declared packages are ever touched -- never
+        a global upgrade. A missing REQUIRED dependency blocks the operation until
+        satisfied; a missing OPTIONAL one only disables its capability and lets
+        the rest proceed. Returns True when it is safe to continue.
+        """
+        deps = self.manifest.system_dependencies
+        if not deps:
+            return True
+
+        family, manager = detect_package_manager()
+        statuses = resolve(deps, family, manager)
+        missing = [s for s in statuses if s.resolvable and s.missing]
+        unresolvable_required = [s for s in statuses
+                                 if s.dep.required and not s.resolvable]
+
+        if not missing and not unresolvable_required:
+            return True
+
+        print("System dependencies:")
+        self._print_dep_status(statuses, family)
+
+        if dry_run:
+            for status in missing:
+                cmd = install_command(manager, list(status.missing))
+                if cmd:
+                    print(f"      would run: {' '.join(cmd)}")
+            print("\nNo package was installed (--dry-run).")
+            return True
+
+        # A required dependency with no package for this platform, or no supported
+        # manager to install it, cannot be satisfied here. Say so and stop rather
+        # than build something that will not work.
+        if unresolvable_required:
+            for status in unresolvable_required:
+                print(f"  cannot satisfy required '{status.dep.id}' on this "
+                      "platform; install it manually.", file=sys.stderr)
+            raise DeployError("a required system dependency cannot be satisfied here.")
+
+        if not missing:
+            return True
+
+        if manager is None:
+            # Only optional deps remain (requireds handled above): nothing to
+            # install here, the capabilities stay unavailable.
+            print("  no supported package manager here; optional dependencies "
+                  "stay unavailable (install them manually if wanted).")
+            return True
+
+        packages = []
+        for status in missing:
+            packages += list(status.missing)
+        has_required = any(s.dep.required for s in missing)
+
+        if not assume_yes:
+            if sys.stdin and sys.stdin.isatty():
+                reply = input("\nInstall the missing packages now? [Y/n] ")
+                if reply.strip().lower() in ("n", "no", "non"):
+                    if has_required:
+                        raise DeployError("required dependency declined; aborting.")
+                    print("  optional dependencies left uninstalled.")
+                    return True
+            elif has_required:
+                raise DeployError(
+                    "required system dependency missing; re-run with --yes to "
+                    "install it, or install the package manually.")
+            else:
+                print("  optional dependencies missing; re-run with --yes to "
+                      "install them.")
+                return True
+
+        cmd = install_command(manager, packages)
+        if hasattr(os, "geteuid") and os.geteuid() != 0:
+            raise DeployError(
+                "installing system packages needs root; re-run under sudo.\n"
+                f"  {' '.join(cmd)}")
+        print(f"\nInstalling: {' '.join(cmd)}")
+        if subprocess.run(cmd, check=False).returncode != 0:
+            raise DeployError("the package installation failed.")
+
+        # Verify: re-check, and never claim success on a required one still absent.
+        after = resolve(deps, family, manager)
+        still_required = [s for s in after if s.dep.required and s.missing]
+        if still_required:
+            raise DeployError(
+                "a required dependency is still missing after installation.")
+        return True
+
     # -- Purge ------------------------------------------------------------
 
     def purge(self, ids: list | None = None, purge_all: bool = False,
@@ -785,12 +905,33 @@ class Deployer:
         # must stay under the service's own base directory).
         override = (self.manifest.deployed_config_value(category.from_config)
                     if category.from_config else None)
+        if override and category.from_config_kind == "dir":
+            # The config value is a PARENT directory; the declared paths name the
+            # files within it (one sqlite per history, say). Guard each against
+            # escaping that directory.
+            parent = Path(os.path.expandvars(override)).resolve()
+            targets = []
+            for rel in category.paths:
+                target = (parent / os.path.expandvars(rel)).resolve()
+                try:
+                    target.relative_to(parent)
+                except ValueError:
+                    raise DeployError(
+                        f"purge path '{rel}' escapes {parent}; refusing to remove it.")
+                targets.append(target)
+            self._purge_targets(targets, dry_run)
+            return
         if override:
+            # from_config_kind == "path": the value IS the target, whole.
             targets = [Path(os.path.expandvars(override))]
             self._purge_targets(targets, dry_run)
             return
 
+        # No override: the default location. For a "dir" category that default
+        # dir is base/default_dir; for a "path" category it is base directly.
         base = self.manifest.base_dir(category.base)
+        if category.from_config_kind == "dir" and category.default_dir:
+            base = base / os.path.expandvars(category.default_dir)
         base_resolved = base.resolve()
         targets = []
         for rel in category.paths:
