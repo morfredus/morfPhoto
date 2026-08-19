@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "project": { "id": "morfPhoto", "type": "service" },
+  "packaging": {
+    "provider": "morfdeploy",
+    "targets": {
+      "linux-amd64-deb":    { "platform": { "os": "linux", "arch": "x86_64" }, "build": { "preset": "linux" },       "package": { "format": "deb", "architecture": "amd64" } },
+      "linux-arm64-deb":    { "platform": { "os": "linux", "arch": "arm64" },  "build": { "preset": "linux-arm64" }, "package": { "format": "deb", "architecture": "arm64" } },
+      "windows-x86_64-zip": { "platform": { "os": "windows", "arch": "x86_64" }, "build": { "preset": "mingw" },     "package": { "format": "zip" } }
+    }
+  }
+}
