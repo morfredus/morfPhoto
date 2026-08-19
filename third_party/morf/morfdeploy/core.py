@@ -112,6 +112,21 @@ class Deployer:
                 f"{self.manifest.repo_root / build_dir} after building."
             )
         print(f"  built: {binary}")
+
+        # Provenance: a build-info.json beside the binary that just built, so the
+        # packaging chantier can prove this exact artifact came from HEAD. Written
+        # ONLY here, in the branch that actually built -- never on the "binary
+        # found" path above, where no build happened and the state would be that
+        # of now, not of the build. Best-effort: a failure to write it must not
+        # break an install.
+        try:
+            from .provenance import write_build_info
+            info = write_build_info(self.manifest.repo_root, binary,
+                                    project=self.manifest.display_name, preset=preset)
+            print(f"  provenance: {info}")
+        except OSError as exc:
+            print(f"  (build-info.json not written: {exc})")
+
         return binary
 
     # -- Step 2 -----------------------------------------------------------

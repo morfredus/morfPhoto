@@ -3,6 +3,13 @@
 Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/)
 et du [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [0.8.0] - 2026-08-20
+
+### Ajouté
+
+- Mise à jour de la copie vendorée de morfDeploy 0.14.0 pour le packaging avec
+  provenance vérifiée.
+
 ## [0.7.2] - 2026-08-18
 
 ### Ajouté

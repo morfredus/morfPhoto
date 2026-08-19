@@ -104,7 +104,10 @@ def resolve(dependencies, family: str, manager: str) -> list:
     """
     statuses = []
     for dep in dependencies:
-        packages = tuple(dep.packages.get(family, ())) if family else ()
+        # BUILD packages: this resolver serves the pre-compilation check
+        # (ensure_dependencies). Runtime packages belong to the .deb's Depends and
+        # are read separately at packaging time (dep.runtime_packages).
+        packages = dep.build_packages(family) if family else ()
         if not packages:
             statuses.append(DepStatus(dep=dep, packages=(), missing=(),
                                       resolvable=False))

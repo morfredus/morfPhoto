@@ -168,7 +168,34 @@ class SystemDependency:
     label: str
     required: bool = False
     required_for: tuple = ()          # capabilities this dependency enables
-    packages: dict = field(default_factory=dict)   # {"debian": [...], "fedora": [...]}
+    #: Packages per family. Two shapes are accepted, both understood here:
+    #:   legacy flat list  {"debian": ["libssh2-1-dev"]}          -> BUILD only;
+    #:   split object      {"debian": {"build": [...], "runtime": [...]}}.
+    #: BUILD prepares the compilation machine; RUNTIME is what a .deb's `Depends`
+    #: draws from -- never inferred from a `-dev` name. A linked library is found
+    #: from the binary itself (dpkg-shlibdeps), so RUNTIME lists only what the
+    #: linkage cannot reveal: a subprocess (exiftool), a plugin, a system tool.
+    packages: dict = field(default_factory=dict)
+
+    def build_packages(self, family: str) -> tuple:
+        """Packages needed to COMPILE, for this family (legacy flat list = build)."""
+        value = self.packages.get(family)
+        if value is None:
+            return ()
+        if isinstance(value, dict):
+            return tuple(value.get("build") or ())
+        return tuple(value)   # a flat list is, historically, the build packages
+
+    def runtime_packages(self, family: str) -> tuple:
+        """Packages needed to RUN, for this family -- what feeds a .deb's Depends.
+
+        Empty for a legacy flat list: it declared build packages, and a runtime
+        need must be stated explicitly, never guessed from a `-dev` name.
+        """
+        value = self.packages.get(family)
+        if isinstance(value, dict):
+            return tuple(value.get("runtime") or ())
+        return ()
 
 
 @dataclass(frozen=True)
@@ -495,17 +522,41 @@ class Manifest:
             if not isinstance(packages, dict) or not packages:
                 raise ManifestError(
                     f"{path}: system dependency '{did}' declares no 'packages'.")
+            normalised = {}
             for family, names in packages.items():
-                if not isinstance(names, list) or not names:
+                # Two accepted shapes per family: the legacy flat list (BUILD), or
+                # the split object {build, runtime}. A build-only or runtime-only
+                # split is valid (exiftool is runtime-only); an entry that lists
+                # neither is refused, as an empty list always was.
+                if isinstance(names, list):
+                    if not names:
+                        raise ManifestError(
+                            f"{path}: system dependency '{did}', family '{family}' "
+                            "lists no package.")
+                    normalised[family] = tuple(names)
+                elif isinstance(names, dict):
+                    build = names.get("build", [])
+                    runtime = names.get("runtime", [])
+                    if not isinstance(build, list) or not isinstance(runtime, list):
+                        raise ManifestError(
+                            f"{path}: system dependency '{did}', family '{family}': "
+                            "'build' and 'runtime' must be lists.")
+                    if not build and not runtime:
+                        raise ManifestError(
+                            f"{path}: system dependency '{did}', family '{family}' "
+                            "declares neither a build nor a runtime package.")
+                    normalised[family] = {"build": tuple(build),
+                                          "runtime": tuple(runtime)}
+                else:
                     raise ManifestError(
                         f"{path}: system dependency '{did}', family '{family}' "
-                        "lists no package.")
+                        "must be a list of packages, or {build, runtime}.")
             deps.append(SystemDependency(
                 id=did,
                 label=entry.get("label") or did,
                 required=bool(entry.get("required", False)),
                 required_for=tuple(entry.get("required_for", ())),
-                packages={k: tuple(v) for k, v in packages.items()},
+                packages=normalised,
             ))
         return tuple(deps)
 

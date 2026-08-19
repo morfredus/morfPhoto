@@ -26,7 +26,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "action",
         choices=("install", "update", "uninstall", "status", "is-installed",
-                 "config", "purge", "deps", "build-deps"),
+                 "config", "purge", "deps", "build-deps", "build-info", "package"),
         help="What to do",
     )
     parser.add_argument(
@@ -92,6 +92,25 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="uninstall --purge: copy the configuration into DIR before removing it",
     )
+    parser.add_argument(
+        "--target",
+        default=None,
+        metavar="NAME",
+        help="package: build only this target (must be native to this platform)",
+    )
+    parser.add_argument(
+        "--no-build",
+        action="store_true",
+        dest="no_build",
+        help="package: use the binary already built (the provenance barrier still applies)",
+    )
+    parser.add_argument(
+        "--out",
+        type=Path,
+        metavar="DIR",
+        default=None,
+        help="package: output directory for the deliverables (default: <repo>/dist)",
+    )
     return parser
 
 
@@ -114,6 +133,10 @@ def main(argv: list | None = None) -> int:
         return 2
     if args.assume_yes and args.action not in ("install", "deps", "build-deps"):
         print("--yes only applies to 'install', 'deps' and 'build-deps'.",
+              file=sys.stderr)
+        return 2
+    if (args.target or args.no_build or args.out) and args.action != "package":
+        print("--target, --no-build and --out only apply to 'package'.",
               file=sys.stderr)
         return 2
 
@@ -224,6 +247,48 @@ def main(argv: list | None = None) -> int:
             ],
         }
         print(json.dumps(catalog, ensure_ascii=True))
+        return 0
+
+    # build-info: write build-info.json beside the already-built binary, WITHOUT
+    # building. This is the path `morf build` takes after compiling a service --
+    # the artifact is located by morfdeploy's own convention (locate_binary), so
+    # the orchestrator needs no artifact heuristic of its own, and the provenance
+    # helper records the full commit, dirty state and detected platform. Manifest
+    # only: no backend, no privileges, works wherever a build for this platform is.
+    if args.action == "build-info":
+        from .core import detect_preset, locate_binary
+        from .provenance import write_build_info
+        preset, build_dir = detect_preset()
+        binary = locate_binary(manifest, build_dir)
+        if binary is None:
+            print(f"No built binary for {manifest.display_name} under "
+                  f"{manifest.repo_root / build_dir}; build it first.",
+                  file=sys.stderr)
+            return 1
+        info = write_build_info(manifest.repo_root, binary,
+                                project=manifest.display_name, preset=preset)
+        print(f"build-info written: {info}")
+        return 0
+
+    # package: build the platform's deliverable(s) from a provenance-checked
+    # binary. Reads morfproject.json (targets) and service.json (manifest); needs
+    # the platform's own packaging tools (dpkg-deb on Debian, windeployqt on
+    # Windows). Manifest-only orchestration -- no service backend required.
+    if args.action == "package":
+        from . import package as pkg
+        from . import morfproject as mproj
+        project = mproj.load(args.repo.resolve())
+        if project is None:
+            print(f"{args.repo}: no morfproject.json; nothing to package.",
+                  file=sys.stderr)
+            return 2
+        out = args.out or (args.repo.resolve() / "dist")
+        try:
+            made = pkg.package(project, manifest, args.target, args.no_build, out)
+        except pkg.PackageError as exc:
+            print(f"\n{exc}", file=sys.stderr)
+            return 1
+        print(f"\n{len(made)} deliverable(s) built in {out}.")
         return 0
 
     # `status` must work on an unsupported platform: refusing to even report
