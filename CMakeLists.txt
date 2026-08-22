@@ -35,6 +35,15 @@ set(CMAKE_AUTOMOC ON)
 # Concurrent : chaque passe d'indexation tourne sur un thread du pool.
 find_package(Qt6 REQUIRED COMPONENTS Core Network Sql Concurrent)
 
+# --- Enregistrement des compilations (best-effort) ------------------------
+# Chronometre le vrai travail des compilateurs et signale la duree a
+# morfAnalytics (POST /api/monitor/activity), QUEL QUE SOIT le declencheur :
+# `cmake --build` direct, `morf upgrade` ou un deploiement morfDeploy (un
+# marqueur evite le double comptage cote morfDeploy). Sans URL configuree
+# (machine hors parc), c'est un no-op silencieux. A appeler AVANT les cibles.
+include("${CMAKE_CURRENT_SOURCE_DIR}/third_party/morf/morfdeploy/record_compile.cmake")
+morf_enable_compile_recording()
+
 # --- Dependance morfBeacon (annonce de presence sur le LAN) ---------------
 # morfBeacon est EMBARQUE (copie vendoree) dans third_party/morf/beacon, lie
 # statiquement : le projet se compile sans dependre d'aucun depot externe, a
@@ -59,6 +68,7 @@ add_library(morfPhoto STATIC
     src/PhotoScanner.cpp                  # parcours FS + garde-fou de perimetre
     src/Indexer.cpp                       # passe de reconciliation (verdict, garde passe-unique)
     src/PhotoModule.cpp                   # module metier : assemble tout le domaine
+    src/SourceManager.cpp                 # sources SMB poussees (montage via helper privilegie)
     src/PhotoApi.cpp                      # routage /api/v1 (delegue par HttpServer)
     include/morfphoto/PhotoTypes.h
     include/morfphoto/PhotoSchema.h
@@ -67,6 +77,7 @@ add_library(morfPhoto STATIC
     include/morfphoto/PhotoScanner.h
     include/morfphoto/Indexer.h
     include/morfphoto/PhotoModule.h
+    include/morfphoto/SourceManager.h
     include/morfphoto/PhotoApi.h
     include/morfphoto/IModule.h
     include/morfphoto/ModuleRegistry.h
@@ -97,6 +108,16 @@ endif()
 
 # --- Cible service (le demon autonome) ------------------------------------
 add_subdirectory(service)
+
+# Signale la duree de compile a morfAnalytics apres le lien du binaire de service.
+morf_record_target_build(morfphoto "morfPhoto")
+
+# --- Helper privilegie (Linux uniquement) ---------------------------------
+# Seul point d'entree root : monte un partage SMB en lecture seule. Produit a
+# cote du binaire de service, installe setuid par morfDeploy (voir agent/).
+if(UNIX AND NOT APPLE)
+    add_subdirectory(agent)
+endif()
 
 # --- Test de fumee headless (aucun reseau, aucun ExifTool) ----------------
 #   cmake --preset mingw -DMORFPHOTO_BUILD_SMOKE=ON && ctest --preset mingw

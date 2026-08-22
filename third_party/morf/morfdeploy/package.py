@@ -131,7 +131,14 @@ def select_targets(project, target_name, cur_os, cur_arch):
 
 def build_preset(repo_root: Path, preset: str) -> None:
     """Configure and build a preset, or stop. No fall-back on failure."""
-    for stage in (["cmake", "--preset", preset],
+    overrides = []
+    if platform.system() == "Windows" and preset in ("mingw", "windows"):
+        # Packaging builds must receive the same portable toolchain discovery as
+        # ordinary service builds. Otherwise a preset sees Qt but misses OpenSSL
+        # and other libraries installed beside the detected MinGW compiler.
+        from .backends.windows import _mingw_toolchain_overrides
+        overrides = _mingw_toolchain_overrides()
+    for stage in (["cmake", "--preset", preset, *overrides],
                   ["cmake", "--build", "--preset", preset]):
         result = subprocess.run(stage, cwd=str(repo_root), check=False)
         if result.returncode != 0:
@@ -268,6 +275,23 @@ def build_deb(manifest: Manifest, binary: Path, target, out_dir: Path) -> Path:
         shutil.copy2(binary, opt / manifest.binary_name())
         (opt / manifest.binary_name()).chmod(0o755)
 
+        # A privileged helper is an explicit, opt-in package fact. It never
+        # shares the application directory: the service account must not be
+        # able to replace a root executable during a normal update.
+        helper_path = None
+        if manifest.helper_binary:
+            candidates = (
+                manifest.repo_root / "build" / "service" / manifest.helper_binary,
+                manifest.repo_root / "build-arm64" / "service" / manifest.helper_binary,
+            )
+            helper_path = next((candidate for candidate in candidates if candidate.is_file()), None)
+            if helper_path is None:
+                raise PackageError(f"privileged helper not built: {manifest.helper_binary}")
+            helper_dir = stage / "usr" / "lib" / "morfsystem" / svc
+            helper_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(helper_path, helper_dir / manifest.helper_binary)
+            (helper_dir / manifest.helper_binary).chmod(0o4750)
+
         conffiles = []
         etc = Path(str(manifest.config_dir()).lstrip("/"))
         for config in manifest.configs:
@@ -311,12 +335,17 @@ def build_deb(manifest: Manifest, binary: Path, target, out_dir: Path) -> Path:
 
         # Maintainer scripts: a dedicated system user, then systemd wiring. Config
         # files are conffiles, so dpkg preserves an edited one across upgrades.
+        helper_postinst = ""
+        if manifest.helper_binary:
+            helper_postinst = (
+                f"chown root:{run_user} /usr/lib/morfsystem/{svc}/{manifest.helper_binary} || true\n"
+                f"chmod 4750 /usr/lib/morfsystem/{svc}/{manifest.helper_binary} || true\n")
         postinst = (
             "#!/bin/sh\nset -e\n"
             f"if ! id -u {run_user} >/dev/null 2>&1; then\n"
             f"  adduser --system --group --no-create-home --home /opt/{svc} {run_user} || true\n"
             "fi\n"
-            f"chown -R {run_user}:{run_user} /opt/{svc} {manifest.state_dir()} || true\n"
+            f"chown -R {run_user}:{run_user} /opt/{svc} {manifest.state_dir()} || true\n") + helper_postinst + (
             "if [ -d /run/systemd/system ]; then\n"
             "  systemctl daemon-reload || true\n"
             f"  systemctl enable --now {svc}.service || true\n"

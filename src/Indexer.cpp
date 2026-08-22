@@ -40,6 +40,16 @@ int Indexer::run(IndexMode mode, const QVector<int>& folderIds, const QString& t
         m_startedAt = nowIso();
     }
 
+    // Dénominateur initial : dernière passe, si elle a vu des fichiers. Ça donne
+    // un pourcentage dès la première photo, sans re-parcourir l'arbre. Le total
+    // s'ajuste ensuite (il grandit, ou il se recale quand tous les dossiers sont
+    // listés). startRun() viendrait après : latestRun() serait alors CETTE passe vide.
+    bool hadPrev = false;
+    const QJsonObject prevRun = m_repo->latestRun(&hadPrev);
+    const qint64 estimate = (hadPrev)
+        ? qint64(prevRun.value(QStringLiteral("files_seen")).toDouble())
+        : 0;
+
     const int runId = m_repo->startRun(indexModeName(mode), trigger, nowIso());
     RunCounts counts;
 
@@ -56,20 +66,36 @@ int Indexer::run(IndexMode mode, const QVector<int>& folderIds, const QString& t
     // Racines constatées indisponibles pendant CETTE passe : une fois une racine KO,
     // ses autres sélections sont sautées sans re-sonder (ne pas s'acharner sur une
     // source muette : un timeout par racine, pas un par dossier).
-    // Progression : le nombre de dossiers est le dénominateur fiable, connu ici.
-    m_pFoldersTotal = folders.size();
-    m_pFoldersDone  = 0;
+    m_pFoldersTotal     = folders.size();
+    m_pFoldersDone      = 0;
     m_pCurrentFolder.clear();
+    m_pFilesDiscovered  = 0;
+    m_pFilesTotalFinal  = false;
+    m_pPhase            = QStringLiteral("indexing");
+    // Pas de parcours de comptage : l'EXIF (ou le touch) commence avec le premier
+    // dossier. Un walk à vide doublerait l'I/O disque/SMB pour un pourcentage.
+    m_pFilesTotal = (estimate > 0) ? estimate : -1;
     reportProgress(0);
 
     QSet<QString> unavailableRoots;
+
     bool interrupted = false;
+    if (m_pFoldersTotal == 0) {
+        m_pFilesTotal = 0;
+        m_pFilesTotalFinal = true;
+        reportProgress(0);
+    }
     for (const FolderRow& folder : folders) {
         m_pCurrentFolder = folder.path;
         reportProgress(counts.seen);            // dossier entamé
         if (reconcileFolder(folder, mode, runId, counts, unavailableRoots))
             interrupted = true;
         ++m_pFoldersDone;
+        if (m_pFoldersDone >= m_pFoldersTotal) {
+            // Tous les dossiers ont été listés (ou sautés) : le total ne bougera plus.
+            m_pFilesTotal = m_pFilesDiscovered;
+            m_pFilesTotalFinal = true;
+        }
         reportProgress(counts.seen);            // dossier terminé
     }
 
@@ -128,6 +154,18 @@ bool Indexer::reconcileFolder(const FolderRow& folder, IndexMode mode, int runId
         folder.path, folder.recursive,
         [this, &folder]() { return probeAccessible(folder.rootPath, m_probeTimeoutMs); });
 
+    // Total « connu pour l'instant » = fichiers déjà listés. Ça grandit dossier
+    // après dossier ; le pourcentage se recalcule sans second parcours.
+    qint64 nThis = 0;
+    for (const FileInfo& info : scan.files) {
+        if (isWithinRoots(info.path, m_roots))
+            ++nThis;
+    }
+    m_pFilesDiscovered += nThis;
+    if (m_pFilesTotal < 0 || m_pFilesDiscovered > m_pFilesTotal)
+        m_pFilesTotal = m_pFilesDiscovered;
+    reportProgress(counts.seen);
+
     for (const FileInfo& info : scan.files) {
         // Défense en profondeur : ne jamais rien indexer hors des racines globales.
         if (!isWithinRoots(info.path, m_roots))
@@ -135,9 +173,9 @@ bool Indexer::reconcileFolder(const FolderRow& folder, IndexMode mode, int runId
         ++counts.seen;
         seen.insert(info.path);
 
-        // Un gros dossier ne doit pas figer la barre : on rafraîchit le compteur de
-        // fichiers toutes les 200 entrées (le total de dossiers, lui, ne bouge pas).
-        if (counts.seen % 200 == 0)
+        // Un gros dossier ne doit pas figer la barre : rafraîchir assez souvent
+        // pour qu'un corpus déséquilibré (10 / 5000 / 20) avance au fichier.
+        if (counts.seen % 25 == 0)
             reportProgress(counts.seen);
 
         auto it = known.find(info.path);
@@ -210,8 +248,17 @@ bool Indexer::extract(int runId, const QString& path, RunCounts& counts, ExifDat
 }
 
 void Indexer::reportProgress(qint64 filesSeen) const {
-    if (m_progress)
-        m_progress(m_pFoldersDone, m_pFoldersTotal, filesSeen, m_pCurrentFolder);
+    if (!m_progress)
+        return;
+    IndexProgress p;
+    p.phase         = m_pPhase;
+    p.foldersDone   = m_pFoldersDone;
+    p.foldersTotal  = m_pFoldersTotal;
+    p.filesSeen     = filesSeen;
+    p.filesTotal    = m_pFilesTotal;
+    p.filesTotalFinal = m_pFilesTotalFinal;
+    p.currentFolder = m_pCurrentFolder;
+    m_progress(p);
 }
 
 QJsonObject Indexer::state() const {

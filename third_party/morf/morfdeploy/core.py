@@ -154,6 +154,34 @@ class Deployer:
         # CMake cache, which lives beside it, not beside the installed copy.
         self.backend.install_runtime(target, binary)
 
+        # A helper declares a deliberately narrow root boundary.  Source
+        # installs must deploy it too: without this, a service installed from
+        # its clone starts correctly but fails only when it needs its helper.
+        # Keep the helper outside /opt, root-owned and setuid.  It is excluded
+        # from ``written`` so chown_to_user() never weakens that boundary.
+        if self.manifest.helper_binary and platform.system() == "Linux":
+            helper_source = binary.parent / self.manifest.helper_binary_name()
+            if not helper_source.is_file():
+                raise DeployError(
+                    f"Privileged helper is missing beside the service binary: {helper_source}"
+                )
+            helper_dir = Path("/usr/lib/morfsystem") / self.manifest.service_name
+            helper_dir.mkdir(parents=True, exist_ok=True)
+            # The DIRECTORY must be traversable by the service account, or the
+            # unprivileged service cannot even reach the helper inside it (it
+            # aborts with "helper not found"). Give the directory the same group
+            # as the helper -- the service user's group -- and keep 0750: root
+            # owns it, the service group may traverse, nobody else. Chowning only
+            # the file (below) while leaving the directory root:root 0750 was the
+            # bug that made a correctly installed helper unreachable at runtime.
+            helper_dir.chmod(0o750)
+            shutil.chown(helper_dir, group=invoking_user())
+            helper_target = helper_dir / self.manifest.helper_binary_name()
+            shutil.copy2(helper_source, helper_target)
+            shutil.chown(helper_target, user="root", group=invoking_user())
+            helper_target.chmod(0o4750)
+            print(f"  privileged helper installed: {helper_target}")
+
         for config in self.manifest.configs:
             dest = config.resolved_dest(config_dir)
             dest.parent.mkdir(parents=True, exist_ok=True)

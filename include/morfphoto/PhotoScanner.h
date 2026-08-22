@@ -66,4 +66,12 @@ bool probeAccessible(const QString& path, int timeoutMs);
 ScanResult scanFolder(const QString& folder, bool recursive,
                       const std::function<bool()>& stillAvailable = {});
 
+// Compte les fichiers image sans les charger en mémoire (pas d'EXIF, pas de
+// FileInfo). Utile aux tests et à un diagnostic ; l'indexation n'en fait plus
+// un parcours préalable (un walk à vide doublerait l'I/O). `completed` (si
+// fourni) reste false si `stillAvailable` interrompt le parcours.
+qint64 countImageFiles(const QString& folder, bool recursive,
+                       const std::function<bool()>& stillAvailable = {},
+                       bool* completed = nullptr);
+
 } // namespace morfphoto

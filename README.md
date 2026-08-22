@@ -2,7 +2,7 @@
 
 *Read in another language: **English** (this document) · [Français](README.fr.md).*
 
-[![Version](https://img.shields.io/badge/version-0.8.0-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.9.8-blue)](CHANGELOG.md)
 ![C++](https://img.shields.io/badge/C%2B%2B-17-00599C?logo=cplusplus)
 ![Qt](https://img.shields.io/badge/Qt-6-41CD52?logo=qt)
 ![Build](https://img.shields.io/badge/CMake-3.21+-064F8C?logo=cmake)
@@ -64,10 +64,15 @@ GET  /api/v1/photos/summary      global counters
 GET  /api/v1/photos/cameras|lenses|focals|years
 POST /api/v1/index               trigger a pass (async): {"mode":"incremental|full"}
 GET  /api/v1/index/status        indexing state + last run
+                                 (progress.phase, files_seen, files_total, files_total_final, percent;
+                                  percent adapts until files_total_final is true)
 GET  /api/v1/folders             watched selections
 POST /api/v1/folders             declare a selection (403 outside an allowed root); optional removable, volume_label
 PATCH  /api/v1/folders/{id}      update enabled, removable, volume_label, analytics_excluded (any subset)
 DELETE /api/v1/folders/{id}      soft retire (history preserved)
+GET  /api/v1/roots               allowed roots (config + validated SMB mounts)
+GET  /api/v1/sources             pushed SMB sources
+POST /api/v1/sources             mount a Windows share under /mnt/photos_<hostname>
 POST /api/v1/purge               PERMANENT deletion: {"scope":"folder|year|camera|all","value":...}
 ```
 

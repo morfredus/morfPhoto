@@ -223,6 +223,10 @@ class Manifest:
     service_name: str
     display_name: str
     binary: str
+    # Optional root-only companion used by the rare services that must perform
+    # one narrowly defined privileged action while their HTTP process remains
+    # unprivileged. It is deliberately not part of the normal application dir.
+    helper_binary: str = ""
     app_dirs: dict = field(default_factory=dict)
     config_dirs: dict = field(default_factory=dict)
     state_dirs: dict = field(default_factory=dict)
@@ -341,6 +345,11 @@ class Manifest:
             return self.binary + ".exe"
         return self.binary
 
+    def helper_binary_name(self) -> str:
+        if platform.system() == "Windows" and self.helper_binary and not self.helper_binary.endswith(".exe"):
+            return self.helper_binary + ".exe"
+        return self.helper_binary
+
     def installed_binary(self) -> Path:
         return self.app_dir() / self.binary_name()
 
@@ -454,6 +463,7 @@ class Manifest:
             service_name=raw["service_name"],
             display_name=raw.get("display_name") or raw["service_name"],
             binary=raw["binary"],
+            helper_binary=raw.get("helper_binary", ""),
             app_dirs=raw.get("app_dir") or {},
             config_dirs=raw.get("config_dir") or {},
             state_dirs=raw.get("state_dir") or {},

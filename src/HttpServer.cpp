@@ -53,6 +53,7 @@ QByteArray reasonFor(int code) {
         case 404: return "Not Found";
         case 405: return "Method Not Allowed";
         case 409: return "Conflict";
+        case 502: return "Bad Gateway";
         case 503: return "Service Unavailable";
         default:  return "OK";
     }

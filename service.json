@@ -4,6 +4,8 @@
   "display_name": "morfPhoto",
   "description": "Permanent photo-library indexing service",
   "binary": "morfphoto",
+  "_comment_helper": "Point d'entree privilegie UNIQUE (Linux) : monte un partage SMB en lecture seule sous /mnt/photos_<hostname> quand PhotoHub pousse une source, ecrit smb-photos-<hostname>.cred, persiste fstab et ajoute la racine a morfphoto.json. Installe par morfdeploy setuid 4750, root:<compte-service>, sous /usr/lib/morfsystem/morfphoto/ (hors /opt). Le service HTTP reste non privilegie.",
+  "helper_binary": "morfphoto-helper",
   "_comment_app_dir": "Where the binary and configurations are installed, per platform. Overridden by the MORF_APP_DIR environment variable, which replaces the per-project prefixes (MT_, MN_, MS_) that had already drifted apart.",
   "app_dir": {
     "linux": "/opt/morfphoto",

@@ -24,6 +24,7 @@
 #include "morfphoto/PhotoRepository.h"
 #include "morfphoto/ExifExtractor.h"
 #include "morfphoto/Indexer.h"
+#include "morfphoto/SmbSourceNaming.h"
 
 using namespace morfphoto;
 
@@ -61,6 +62,31 @@ int main(int argc, char** argv) {
     CHECK(!isWithinRoots(base + QStringLiteral("/autre/x.jpg"), {photos}), "hors racine -> refuse");
     CHECK(!isWithinRoots(photos + QStringLiteral("/../evasion.jpg"), {photos}), "'..' ne s'echappe pas");
 
+    writeBytes(photos + QStringLiteral("/2024/a.jpg"), 100);
+    writeBytes(photos + QStringLiteral("/2024/b.arw"), 200);
+    writeBytes(photos + QStringLiteral("/2024/notes.txt"), 50);
+    bool countDone = false;
+    const qint64 nImg = countImageFiles(photos, true, {}, &countDone);
+    CHECK(countDone && nImg == 2, "precomptage: 2 images, notes.txt ignore");
+
+    // Identite canonique des sources SMB (hostname -> slug -> montage / creds).
+    CHECK(hostnameSlug(QStringLiteral("ASUS-DEV")) == QLatin1String("asus-dev"),
+          "slug ASUS-DEV -> asus-dev");
+    CHECK(hostnameSlug(QStringLiteral("PC-FRED")) == QLatin1String("pc-fred"),
+          "slug PC-FRED -> pc-fred");
+    CHECK(mountpointForSlug(QStringLiteral("asus-dev"))
+              == QLatin1String("/mnt/photos_asus-dev"),
+          "montage /mnt/photos_<slug>");
+    CHECK(credentialsPathForSlug(QStringLiteral("pc-fred"))
+              == QLatin1String("/etc/morfsystem/smb-photos-pc-fred.cred"),
+          "creds par machine");
+    CHECK(looksLikeIpv4(QStringLiteral("192.168.1.39")), "IPv4 reconnue");
+    CHECK(!looksLikeIpv4(QStringLiteral("ASUS-DEV")), "hostname n'est pas une IPv4");
+    CHECK(isNewConventionMountpoint(QStringLiteral("/mnt/photos_asus-dev")),
+          "nouvelle convention photos_");
+    CHECK(!isNewConventionMountpoint(QStringLiteral("/mnt/photos")),
+          "/mnt/photos generique refuse pour une nouvelle source");
+
     // Sonde d'accessibilité bornée : un dossier présent répond, un chemin absent est
     // déclaré indisponible sans attendre (déterministe, hors réseau).
     CHECK(probeAccessible(photos, 1000), "probe: dossier existant -> accessible");
@@ -87,9 +113,6 @@ int main(int argc, char** argv) {
     CHECK(!de.ok && !errCase.isEmpty(), "mapTags: Error -> ok=false, message");
 
     // --- 3) Cycle d'indexation (extracteur nul) ---
-    writeBytes(photos + QStringLiteral("/2024/a.jpg"), 100);
-    writeBytes(photos + QStringLiteral("/2024/b.arw"), 200);
-    writeBytes(photos + QStringLiteral("/2024/notes.txt"), 50);
 
     PhotoRepository repo(QStringLiteral("smoke:main"));
     CHECK(repo.open(base + QStringLiteral("/db.sqlite")), "ouverture base + migrations");
@@ -97,7 +120,13 @@ int main(int argc, char** argv) {
     CHECK(fid > 0, "addFolder");
 
     Indexer idx(&repo, nullptr, {photos});
+    IndexProgress lastProg;
+    idx.setProgressCallback([&](const IndexProgress& p) { lastProg = p; });
     CHECK(idx.run(IndexMode::Full, {}, QStringLiteral("cli")) > 0, "passe full");
+    CHECK(lastProg.filesTotal == 2, "progression: files_total = fichiers listes");
+    CHECK(lastProg.filesSeen == 2, "progression: files_seen = corpus");
+    CHECK(lastProg.filesTotalFinal, "progression: total clos en fin de passe");
+    CHECK(lastProg.phase == QLatin1String("indexing"), "progression: phase indexing en fin");
     CHECK(repo.summary().value(QStringLiteral("files_present")).toInt() == 2,
           "2 fichiers indexes (notes.txt ignore)");
 

@@ -47,6 +47,22 @@ inline QString indexModeName(IndexMode m) {
     return m == IndexMode::Full ? QStringLiteral("full") : QStringLiteral("incremental");
 }
 
+// Progression d'une passe, destinée à GET /api/v1/index/status.
+// L'indexation commence tout de suite : pas de parcours dédié au comptage
+// (un second walk doublerait l'I/O, surtout sur un montage réseau).
+// filesTotal < 0 : aucun dénominateur encore (tout début, pas de passe précédente).
+// filesTotalFinal = false : le total peut encore grandir (dossiers restants, ou
+// estimation reprise de la dernière passe) ; le pourcentage s'adapte.
+struct IndexProgress {
+    QString phase;                 // indexing (conservé pour compatibilité clients)
+    int     foldersDone  = 0;
+    int     foldersTotal = 0;
+    qint64  filesSeen    = 0;
+    qint64  filesTotal   = -1;
+    bool    filesTotalFinal = false;
+    QString currentFolder;
+};
+
 class Indexer {
 public:
     // `probeTimeoutMs` : délai maximal d'attente d'une sonde d'accessibilité de
@@ -62,14 +78,10 @@ public:
     // État observable : { state: idle|indexing, started_at, last_error }.
     QJsonObject state() const;
 
-    // Suivi de progression d'une passe. Rappelée pendant `run()` : au démarrage, à
-    // chaque changement de dossier, et périodiquement pendant le scan d'un gros
-    // dossier. Le nombre total de dossiers est connu d'avance (dénominateur fiable) ;
-    // le nombre de fichiers vus est un compteur cumulé (pas de total pré-compté, on
-    // ne parcourt qu'une fois). Le callback est invoqué DANS le thread de la passe :
-    // à son destinataire de faire le passage de thread s'il le faut.
-    using ProgressFn = std::function<void(int foldersDone, int foldersTotal,
-                                          qint64 filesSeen, const QString& currentFolder)>;
+    // Suivi de progression d'une passe. Rappelée pendant `run()` : l'indexation
+    // démarre sans attendre un total définitif. Le callback est invoqué DANS le
+    // thread de la passe.
+    using ProgressFn = std::function<void(const IndexProgress&)>;
     void setProgressCallback(ProgressFn cb) { m_progress = std::move(cb); }
 
 private:
@@ -96,10 +108,13 @@ private:
     QString         m_startedAt;
     QString         m_lastError;
 
-    // Contexte de progression de la passe en cours (thread de passe uniquement).
     ProgressFn m_progress;
+    QString    m_pPhase;
     int        m_pFoldersTotal = 0;
     int        m_pFoldersDone  = 0;
+    qint64     m_pFilesTotal   = -1;
+    qint64     m_pFilesDiscovered = 0;
+    bool       m_pFilesTotalFinal = false;
     QString    m_pCurrentFolder;
 };
 

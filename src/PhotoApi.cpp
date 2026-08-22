@@ -119,6 +119,48 @@ PhotoApi::Result PhotoApi::handle(const QByteArray& method, const QString& path,
         return items(m_module->allowedRoots());
     }
 
+    // ---- /sources : sources SMB poussées par PhotoHub (« Envoyer la config ») ----
+    // GET  : liste les sources connues (hostname, slug, mountpoint, mounted).
+    // POST : {host, share, username, password, hostname} monte sous
+    //        /mnt/photos_<hostname> via le helper, valide le CIFS, persiste
+    //        fstab + racine. Le mot de passe n'est jamais stocké par le service.
+    if (!seg.isEmpty() && seg[0] == QLatin1String("sources")) {
+        if (seg.size() != 1)
+            return error(404, QStringLiteral("not_found"), path);
+        if (method == "GET")
+            return items(m_module->listSources());
+        if (method == "POST") {
+            const QJsonObject in = QJsonDocument::fromJson(body).object();
+            const QString host     = in.value(QStringLiteral("host")).toString().trimmed();
+            const QString share    = in.value(QStringLiteral("share")).toString().trimmed();
+            const QString username = in.value(QStringLiteral("username")).toString();
+            const QString password = in.value(QStringLiteral("password")).toString();
+            QString hostname = in.value(QStringLiteral("hostname")).toString().trimmed();
+            if (hostname.isEmpty())
+                hostname = in.value(QStringLiteral("label")).toString().trimmed();
+            if (host.isEmpty() || share.isEmpty() || username.isEmpty())
+                return error(400, QStringLiteral("bad_request"),
+                             QStringLiteral("`host`, `share` et `username` sont obligatoires"));
+            if (hostname.isEmpty())
+                return error(400, QStringLiteral("bad_request"),
+                             QStringLiteral("`hostname` de la machine source est obligatoire"));
+            QJsonObject out;
+            QString err;
+            if (!m_module->addSource(host, share, username, password, hostname, &out, &err)) {
+                if (!out.contains(QStringLiteral("error")))
+                    out[QStringLiteral("error")] = out.value(QStringLiteral("code")).toString(
+                        QStringLiteral("mount_failed"));
+                if (!out.contains(QStringLiteral("detail")) ||
+                    out.value(QStringLiteral("detail")).toString().isEmpty())
+                    out[QStringLiteral("detail")] = err;
+                out[QStringLiteral("ok")] = false;
+                return {502, toBytes(out)};
+            }
+            return {201, toBytes(out)};
+        }
+        return error(405, QStringLiteral("method_not_allowed"));
+    }
+
     // ---- /index... ----
     if (!seg.isEmpty() && seg[0] == QLatin1String("index")) {
         if (seg.size() == 2 && seg[1] == QLatin1String("status")) {

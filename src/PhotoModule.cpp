@@ -71,6 +71,14 @@ bool PhotoModule::start() {
         return false;
     }
 
+    // Sources SMB poussées par PhotoHub : leurs points de montage sont des racines
+    // autorisées au même titre que celles de la config. Les charger AVANT la
+    // réconciliation, pour qu'une sélection sous un montage poussé reste couverte.
+    m_sourceManager.load();
+    for (const QString& mp : m_sourceManager.mountpoints())
+        if (!m_roots.contains(mp))
+            m_roots << mp;
+
     // Aligner les sélections sur les racines autorisées actuelles (une racine
     // retirée désactive ses sélections sans effacer l'historique).
     reconcileRoots();
@@ -147,6 +155,9 @@ QJsonObject PhotoModule::triggerIndex(IndexMode mode, const QVector<int>& folder
         m_progFoldersTotal = 0;
         m_progFoldersDone  = 0;
         m_progFilesSeen    = 0;
+        m_progFilesTotal   = -1;
+        m_progFilesTotalFinal = false;
+        m_progPhase        = QStringLiteral("indexing");
         m_progCurrentFolder.clear();
     }
 
@@ -162,9 +173,13 @@ QJsonObject PhotoModule::triggerIndex(IndexMode mode, const QVector<int>& folder
 
 void PhotoModule::doPass(IndexMode mode, QVector<int> folderIds, QString trigger) {
     int pass;
+    QStringList roots;
     {
         QMutexLocker lock(&m_stateMutex);
         pass = ++m_passCounter;
+        // Copie des racines sous verrou : addSource() (thread HTTP) peut en ajouter
+        // une pendant qu'une passe démarre. La passe travaille sur son instantané.
+        roots = m_roots;
     }
     QString error;
     {
@@ -173,16 +188,18 @@ void PhotoModule::doPass(IndexMode mode, QVector<int> folderIds, QString trigger
         if (repo.open(m_dbPath)) {
             ExifExtractor extractor(m_exiftoolBinary, m_stayOpen);
             extractor.open();
-            Indexer indexer(&repo, &extractor, m_roots, m_probeTimeoutMs);
+            Indexer indexer(&repo, &extractor, roots, m_probeTimeoutMs);
             // Relais de progression : l'Indexer rappelle depuis CE thread ; on recopie
             // sous verrou dans les membres lus par observableState() (thread HTTP).
-            indexer.setProgressCallback([this](int done, int total, qint64 seen,
-                                               const QString& folder) {
+            indexer.setProgressCallback([this](const IndexProgress& p) {
                 QMutexLocker lock(&m_stateMutex);
-                m_progFoldersDone  = done;
-                m_progFoldersTotal = total;
-                m_progFilesSeen    = seen;
-                m_progCurrentFolder = folder;
+                m_progFoldersDone   = p.foldersDone;
+                m_progFoldersTotal  = p.foldersTotal;
+                m_progFilesSeen     = p.filesSeen;
+                m_progFilesTotal    = p.filesTotal;
+                m_progFilesTotalFinal = p.filesTotalFinal;
+                m_progPhase         = p.phase;
+                m_progCurrentFolder = p.currentFolder;
             });
             indexer.run(mode, folderIds, trigger);
             extractor.close();
@@ -196,6 +213,7 @@ void PhotoModule::doPass(IndexMode mode, QVector<int> folderIds, QString trigger
     QMutexLocker lock(&m_stateMutex);
     m_indexing = false;
     m_lastError = error;
+    m_lastFoldersTotal = m_progFoldersTotal;
 }
 
 QJsonObject PhotoModule::observableState() const {
@@ -209,12 +227,32 @@ QJsonObject PhotoModule::observableState() const {
     // gros dossier. current_folder null si la passe vient juste de démarrer.
     if (m_indexing) {
         QJsonObject prog;
+        prog["phase"]          = m_progPhase.isEmpty()
+                                     ? QStringLiteral("indexing")
+                                     : m_progPhase;
         prog["folders_total"]  = m_progFoldersTotal;
         prog["folders_done"]   = m_progFoldersDone;
         prog["files_seen"]     = static_cast<double>(m_progFilesSeen);
         prog["current_folder"] = m_progCurrentFolder.isEmpty()
                                      ? QJsonValue(QJsonValue::Null)
                                      : QJsonValue(m_progCurrentFolder);
+        prog["files_total_final"] = m_progFilesTotalFinal;
+        if (m_progFilesTotal >= 0) {
+            prog["files_total"] = static_cast<double>(m_progFilesTotal);
+            if (m_progFilesTotal == 0) {
+                prog["percent"] = m_progFilesTotalFinal ? 100.0 : 0.0;
+            } else {
+                double pct = 100.0 * double(m_progFilesSeen) / double(m_progFilesTotal);
+                // Tant que le total peut encore grandir, ne jamais afficher 100 % :
+                // le dénominateur n'est pas clos, un 100 % mentirait.
+                if (!m_progFilesTotalFinal && pct > 99.0)
+                    pct = 99.0;
+                prog["percent"] = qRound(pct * 10.0) / 10.0;
+            }
+        } else {
+            prog["files_total"] = QJsonValue(QJsonValue::Null);
+            prog["percent"]     = QJsonValue(QJsonValue::Null);
+        }
         o["progress"] = prog;
     }
 
@@ -251,8 +289,20 @@ QJsonObject PhotoModule::observableState() const {
 QJsonObject PhotoModule::indexStatus() const {
     QJsonObject o = observableState();
     bool found = false;
-    const QJsonObject run = m_readRepo ? m_readRepo->latestRun(&found) : QJsonObject{};
-    o["last_run"] = found ? QJsonValue(run) : QJsonValue(QJsonValue::Null);
+    const QJsonObject runRaw = m_readRepo ? m_readRepo->latestRun(&found) : QJsonObject{};
+    if (found) {
+        QJsonObject run = runRaw;
+        int lastFolders = 0;
+        {
+            QMutexLocker lock(&m_stateMutex);
+            lastFolders = m_lastFoldersTotal;
+        }
+        if (lastFolders > 0 && !run.contains(QStringLiteral("folders_total")))
+            run[QStringLiteral("folders_total")] = lastFolders;
+        o["last_run"] = run;
+    } else {
+        o["last_run"] = QJsonValue(QJsonValue::Null);
+    }
     return o;
 }
 
@@ -292,6 +342,43 @@ QString PhotoModule::matchingRoot(const QString& path) const {
         if (isWithinRoots(path, {root}))
             return root;
     return {};
+}
+
+// --- Sources SMB poussées ---------------------------------------------------
+
+bool PhotoModule::addSource(const QString& host, const QString& share, const QString& username,
+                            const QString& password, const QString& hostname,
+                            QJsonObject* out, QString* error) {
+    QJsonObject src;
+    QString err;
+    if (!m_sourceManager.addSource(host, share, username, password, hostname, &src, &err)) {
+        if (error) *error = err;
+        if (out) *out = src;
+        return false;
+    }
+    const QString mp = src.value(QStringLiteral("mountpoint")).toString();
+    {
+        QMutexLocker lock(&m_stateMutex);
+        if (!m_roots.contains(mp))
+            m_roots << mp;
+    }
+    // Reactiver une selection eventuellement desactivee avant que la racine existe.
+    // Pas d'indexation automatique : PhotoHub la declenche apres choix du dossier.
+    reconcileRoots();
+    // Redemarrage APRES la reponse HTTP, uniquement si morfphoto.json a change :
+    // le client doit voir le service recharger vraiment la racine. Si la config
+    // etait deja correcte, on evite un redemarrage inutile.
+    if (src.value(QStringLiteral("restart_needed")).toBool()) {
+        QTimer::singleShot(1500, this, [this]() {
+            m_sourceManager.scheduleServiceRestart();
+        });
+    }
+    if (out) *out = src;
+    return true;
+}
+
+QJsonArray PhotoModule::listSources() const {
+    return m_sourceManager.listSources();
 }
 
 bool PhotoModule::addFolder(const QString& path, const QVariant& label, bool recursive,

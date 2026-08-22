@@ -139,4 +139,33 @@ ScanResult scanFolder(const QString& folder, bool recursive,
     return res;
 }
 
+qint64 countImageFiles(const QString& folder, bool recursive,
+                       const std::function<bool()>& stillAvailable, bool* completed) {
+    constexpr int kCheckEvery = 256;
+    const QDirIterator::IteratorFlags flags =
+        recursive ? QDirIterator::Subdirectories : QDirIterator::NoIteratorFlags;
+    QDirIterator it(folder, QDir::Files | QDir::NoDotAndDotDot, flags);
+    qint64 n = 0;
+    int since = 0;
+    while (it.hasNext()) {
+        if (stillAvailable && ++since >= kCheckEvery) {
+            since = 0;
+            if (!stillAvailable()) {
+                if (completed)
+                    *completed = false;
+                return n;
+            }
+        }
+        it.next();
+        const QFileInfo fi = it.fileInfo();
+        const QString ext = QStringLiteral(".") + fi.suffix().toLower();
+        if (!isImageExtension(ext))
+            continue;
+        ++n;
+    }
+    if (completed)
+        *completed = true;
+    return n;
+}
+
 } // namespace morfphoto

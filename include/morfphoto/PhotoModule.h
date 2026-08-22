@@ -7,6 +7,7 @@
 #pragma once
 #include "morfphoto/IModule.h"
 #include "morfphoto/Indexer.h"
+#include "morfphoto/SourceManager.h"
 
 #include <QJsonObject>
 #include <QJsonArray>
@@ -65,6 +66,16 @@ public:
     // Racines AUTORISEES (perimetre defini par la config) : PhotoHub les affiche
     // pour guider l'utilisateur, qui ne peut declarer qu'a l'interieur.
     QJsonArray  allowedRoots() const;
+
+    // --- Sources SMB poussees (bouton « Envoyer la config » de PhotoHub) ---
+    // Monte un partage distant sous /mnt/photos_<hostname> via le helper, valide
+    // le CIFS, persiste fstab + racine, puis (si le JSON a change) programme un
+    // redemarrage. false + *error si une etape obligatoire echoue.
+    bool        addSource(const QString& host, const QString& share, const QString& username,
+                          const QString& password, const QString& hostname,
+                          QJsonObject* out, QString* error);
+    // Sources connues, chacune annotee `mounted`.
+    QJsonArray  listSources() const;
     // Ajoute une sélection. Refuse (false + *error) si hors racine autorisée.
     // `removable` : le dossier vit sur un support amovible (archive), son absence ne
     // vaudra jamais suppression. `volumeLabel` : nom du support (QVariant vide = aucun).
@@ -100,6 +111,9 @@ private:
     // Configuration (lue depuis les params du module).
     QString     m_dbPath;
     QStringList m_roots;
+    // Sources SMB poussees par PhotoHub : leurs points de montage completent
+    // m_roots. Persistees dans l'etat, jamais le mot de passe (voir SourceManager).
+    SourceManager m_sourceManager{QStringLiteral("morfphoto")};
     QString     m_exiftoolBinary;
     bool        m_stayOpen = true;
     // Cadence de la réconciliation automatique. Défaut : 0 => passe automatique
@@ -133,7 +147,11 @@ private:
     int     m_progFoldersTotal = 0;
     int     m_progFoldersDone  = 0;
     qint64  m_progFilesSeen    = 0;
+    qint64  m_progFilesTotal   = -1;
+    bool    m_progFilesTotalFinal = false;
+    QString m_progPhase;
     QString m_progCurrentFolder;
+    int     m_lastFoldersTotal = 0;
     bool           m_started = false;
 };
 

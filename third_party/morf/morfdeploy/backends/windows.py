@@ -37,9 +37,31 @@ import subprocess
 import time
 from pathlib import Path
 
-from ..activity import emit_build_activity
+from ..activity import complete_build_activity
 from ..manifest import Manifest
 from .base import ServiceBackend
+
+
+def _openssl_cmake_flags(prefix: Path) -> list:
+    """Chemins MinGW explicites : CMake 4.x FindOpenSSL cherche souvent des .lib
+    MSVC. Apres un reset de cache (changement de g++), OPENSSL_ROOT_DIR seul
+    ne retrouve plus libcrypto.dll.a.
+    """
+    flags = [f"-DOPENSSL_ROOT_DIR={prefix}"]
+    include = prefix / "include"
+    if include.is_dir():
+        flags.append(f"-DOPENSSL_INCLUDE_DIR={include}")
+    crypto = prefix / "lib" / "libcrypto.dll.a"
+    if not crypto.is_file():
+        crypto = prefix / "lib" / "libcrypto.a"
+    ssl = prefix / "lib" / "libssl.dll.a"
+    if not ssl.is_file():
+        ssl = prefix / "lib" / "libssl.a"
+    if crypto.is_file():
+        flags.append(f"-DOPENSSL_CRYPTO_LIBRARY={crypto}")
+    if ssl.is_file():
+        flags.append(f"-DOPENSSL_SSL_LIBRARY={ssl}")
+    return flags
 
 
 def _mingw_toolchain_overrides() -> list:
@@ -54,6 +76,7 @@ def _mingw_toolchain_overrides() -> list:
     pure improvement rather than a new failure mode.
     """
     overrides = []
+    prefixes: list[str] = []
     ninja = shutil.which("ninja")
     if ninja:
         overrides.append(f"-DCMAKE_MAKE_PROGRAM={ninja}")
@@ -66,8 +89,22 @@ def _mingw_toolchain_overrides() -> list:
     if not (os.environ.get("CMAKE_PREFIX_PATH") or os.environ.get("Qt6_DIR")):
         qmake = shutil.which("qmake6") or shutil.which("qmake")
         if qmake:
-            prefix = Path(qmake).resolve().parent.parent
-            overrides.append(f"-DCMAKE_PREFIX_PATH={prefix}")
+            prefixes.append(str(Path(qmake).resolve().parent.parent))
+    if not os.environ.get("OPENSSL_ROOT_DIR"):
+        openssl = shutil.which("openssl")
+        if openssl:
+            # OpenSSL installed with the active MinGW toolchain exposes its
+            # executable under <prefix>/bin and headers under <prefix>/include.
+            # Deriving the prefix keeps a portable preset free of one machine's
+            # MSYS2 installation path.
+            prefix = Path(openssl).resolve().parent.parent
+            if (prefix / "include" / "openssl" / "ssl.h").is_file():
+                overrides.extend(_openssl_cmake_flags(prefix))
+                ossl = str(prefix)
+                if ossl not in prefixes:
+                    prefixes.append(ossl)
+    if prefixes and not os.environ.get("CMAKE_PREFIX_PATH"):
+        overrides.append("-DCMAKE_PREFIX_PATH=" + ";".join(prefixes))
     return overrides
 
 #: Wrappers that implement the SCM handshake for an ordinary executable.
@@ -292,13 +329,22 @@ class WindowsBackend(ServiceBackend):
 
         result = subprocess.run(
             [tool, "--no-translations", "--compiler-runtime", str(installed_binary)],
-            env=env, check=False,
+            env=env, text=True, capture_output=True, check=False,
         )
+        detail = "\n".join(part for part in (result.stdout, result.stderr) if part).strip()
+        if detail:
+            print(detail)
         if result.returncode != 0:
-            raise RuntimeError(
-                f"windeployqt failed ({result.returncode}) for {installed_binary.name}."
-            )
-        print(f"  Qt runtime deployed beside {installed_binary.name} (windeployqt)")
+            # Some services are plain MinGW executables. Asking windeployqt to
+            # inspect one is expected to fail, but the toolchain dependency pass
+            # below is still required for it.
+            if "does not seem to be a qt executable" not in detail.lower():
+                raise RuntimeError(
+                    f"windeployqt failed ({result.returncode}) for {installed_binary.name}."
+                )
+            print(f"  no Qt runtime required beside {installed_binary.name}")
+        else:
+            print(f"  Qt runtime deployed beside {installed_binary.name} (windeployqt)")
 
         copied = self._copy_toolchain_dlls(installed_binary.parent, Path(tool).parent)
         if copied:
@@ -476,7 +522,7 @@ class WindowsBackend(ServiceBackend):
                            cwd=repo_root, check=True)
             ok = True
         finally:
-            emit_build_activity(repo_root, preset, start, time.time(), ok)
+            complete_build_activity(repo_root, preset, start, ok)
 
     # -- Internals --------------------------------------------------------
 

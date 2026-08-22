@@ -3,6 +3,75 @@
 Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/)
 et du [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [0.9.8] - 2026-08-22
+
+### Modifié
+
+- L'indexation commence tout de suite, sans parcours de comptage. Le total
+  (`files_total`) grandit dossier après dossier, ou reprend le `files_seen` de la
+  dernière passe comme estimation. `files_total_final` passe à vrai quand tous les
+  dossiers ont été listés. Le pourcentage s'adapte ; il reste sous 99 % tant que
+  le total n'est pas clos. Un seul walk disque/SMB : pas de charge CPU supplémentaire.
+
+## [0.9.7] - 2026-08-22
+
+### Modifié
+
+- Pendant le précomptage, `folders_done` avance dossier par dossier (puis revient à 0 à l'indexation) et `files_seen` accumule les fichiers trouvés, pour que PhotoHub puisse afficher un pourcentage de **comptage** distinct du pourcentage d'indexation.
+
+## [0.9.6] - 2026-08-22
+
+### Corrigé
+
+- Classification SMB : `STATUS_ACCOUNT_LOCKED_OUT` (souvent suivi de `return code = -13`) n'est plus un `permission_denied` avec authentification marquée OK. Code `account_locked`, étape `smb_auth` en échec. Les messages d'auth rappellent : identifiant = nom Windows, mot de passe = session locale ou compte Microsoft, jamais l'e-mail ni le PIN.
+- Progression d'indexation : précomptage léger des fichiers image (sans EXIF), puis `files_seen / files_total`. `GET /api/v1/index/status` expose `progress.phase` (`discovering` / `indexing`), `files_total` / `percent` à `null` tant que le dénominateur n'est pas fiable. Les dossiers restent une information secondaire.
+
+## [0.9.5] - 2026-08-22
+
+### Corrigé
+
+- Helper setuid : `mount.cifs` teste l'UID *réel* (`getuid`), pas l'UID effectif. Sans `setuid(0)` après avoir mémorisé le compte du service, le premier montage échouait (`no match for /mnt/photos_<slug> found in /etc/fstab`) alors que l'authentification SMB avait réussi. Les options `uid=`/`gid=` du CIFS restent celles de l'appelant pour que morfPhoto puisse lire le partage.
+- Ce message n'est plus classé `permission_denied` (ACL Windows) : code `cifs_needs_root` si une ancienne version du helper est encore en place.
+
+## [0.9.4] - 2026-08-22
+
+### Corrigé
+
+- Helper privilégié : `QStringLiteral` n'accepte qu'un littéral C, pas une variable (`kFstab`, `kConfigJson`). Remplacé par `QString::fromLatin1` pour compiler sous GCC Linux/ARM.
+
+## [0.9.3] - 2026-08-22
+
+### Corrigé
+
+- Autoconfiguration SMB multi-postes : une machine = un hostname normalisé = un montage `/mnt/photos_<slug>` = un fichier `/etc/morfsystem/smb-photos-<slug>.cred` = une racine. Plus de ressource générique (`/mnt/photos`, `smb-photos.cred`) ni d'identité dérivée de l'IP.
+- Le helper crée le point de montage, vérifie un vrai CIFS lisible (sans `nofail` au test), n'écrit `fstab` qu'ensuite, ajoute la racine à `morfphoto.json` sans toucher aux autres, revalide le JSON, et ne redémarre morfPhoto que si la config a changé.
+- Les erreurs d'authentification (`STATUS_LOGON_FAILURE`) et les autres causes (partage introuvable, hôte injoignable, JSON invalide) remontent classées jusqu'à PhotoHub, avec le détail de l'étape en échec.
+
+## [0.9.2] - 2026-08-21
+
+### Corrigé
+
+- Helper privilégié : autoriser explicitement l'exécution setuid de Qt (QCoreApplication::setSetuidAllowed) ; sans cela le helper avortait « running setuid, this is a security hole » et le bouton « Envoyer la config » échouait.
+- Copie vendorée de morfdeploy alignée sur 0.17.4 (dossier du helper traversable par le compte de service).
+
+## [0.9.1] - 2026-08-21
+
+### Ajouté
+
+- Enregistrement des compilations au niveau CMake (record_compile) : la durée de compile est signalée à morfAnalytics quel que soit le déclencheur (cmake --build direct, morf upgrade, déploiement morfDeploy), plus seulement via morfDeploy.
+
+## [0.9.0] - 2026-08-21
+
+### Ajouté
+
+- Sources SMB poussées par PhotoHub : POST /api/v1/sources monte un partage en lecture seule via un helper privilégié setuid (morfphoto-helper), l'ajoute aux racines et persiste la métadonnée (jamais le mot de passe). Multi-machine, un point de montage /mnt/photos-<hôte> par poste, sans écrasement.
+
+## [0.8.1] - 2026-08-21
+
+### Modifié
+
+- Resynchroniser la copie vendorée de morfdeploy vers 0.17.3.
+
 ## [0.8.0] - 2026-08-20
 
 ### Ajouté

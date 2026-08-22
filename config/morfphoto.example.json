@@ -22,6 +22,7 @@
       "db_path": "",
       "roots": [
         "/mnt/photos",
+        "/mnt/photos-asus-dev",
         "/srv/archives-photo",
         "/media/morfredus"
       ],
