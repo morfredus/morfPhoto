@@ -512,12 +512,31 @@ int doMount(const QString& host, const QString& share, const QString& slug) {
             QStringLiteral("-t"), QStringLiteral("cifs"), unc, r.mountpoint,
             QStringLiteral("-o"), options});
         if (!mounted.ok) {
-            const QString code = classifyMountError(mounted.output);
+            // mount.cifs n'imprime que « mount error(13): Permission denied » : le
+            // VRAI motif (STATUS_LOGON_FAILURE d'un mauvais mot de passe,
+            // STATUS_ACCESS_DENIED d'un refus d'ACL...) ne vit que dans le journal
+            // noyau. Sans lui, un mauvais mot de passe retombait sur un echec
+            // generique et l'etape « authentification » s'affichait OK a tort.
+            // On lit donc les dernieres lignes CIFS de dmesg (helper privilegie)
+            // et on classe sur le motif reel. Si dmesg echoue, on retombe sur la
+            // sortie de mount : pas de regression.
+            QString diag = mounted.output;
+            const CmdResult klog = run(QStringLiteral("dmesg"), {}, 5000);
+            if (klog.ok) {
+                const QStringList lines = klog.output.split(QLatin1Char('\n'));
+                QStringList cifs;
+                for (int i = lines.size() - 1; i >= 0 && cifs.size() < 12; --i)
+                    if (lines.at(i).contains(QLatin1String("CIFS"), Qt::CaseInsensitive))
+                        cifs.prepend(lines.at(i));
+                if (!cifs.isEmpty())
+                    diag += QLatin1Char('\n') + cifs.join(QLatin1Char('\n'));
+            }
+            const QString code = classifyMountError(diag);
             const bool authStepOk = code != QLatin1String("auth_failed")
                                     && code != QLatin1String("account_locked");
-            addStep(r, QStringLiteral("smb_auth"), authStepOk, mounted.output);
+            addStep(r, QStringLiteral("smb_auth"), authStepOk, diag);
             addStep(r, QStringLiteral("cifs_mounted"), false, mounted.output);
-            return fail(r, code, humanFor(code, mounted.output));
+            return fail(r, code, humanFor(code, diag));
         }
         remounted = true;
     }

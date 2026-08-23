@@ -121,6 +121,8 @@ def write_build_info(repo_root: Path, artifact: Path, *, project: str,
     try:
         dest.write_text(payload, encoding="utf-8")
     except PermissionError:
+        # Dossier user, fichier resté root après un cmake/ninja en sudo :
+        # os.access(parent, W_OK) est vrai, write_text non. Unlink puis réécrire.
         dest.unlink(missing_ok=True)
         dest.write_text(payload, encoding="utf-8")
     return dest

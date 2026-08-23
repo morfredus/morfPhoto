@@ -3,6 +3,19 @@
 Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/)
 et du [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [0.9.10] - 2026-08-23
+
+### Corrigé
+
+- Un mot de passe SMB erroné remontait « Authentification ✓ / Partage monté ✗
+  mount error(13): Permission denied » (`cifs_mount_failed`), trompeur : le
+  montage échouait en réalité sur `STATUS_LOGON_FAILURE`. `mount.cifs` n'imprime
+  pas le motif NT (seulement « Permission denied ») ; le helper privilégié lit
+  désormais le journal noyau (`dmesg`) après un échec pour classer sur le motif
+  réel. Un mauvais mot de passe est donc catégorisé `auth_failed` (message
+  explicite : vérifier le mot de passe, jamais le PIN), et l'étape
+  d'authentification n'est plus marquée réussie à tort.
+
 ## [0.9.9] - 2026-08-23
 
 ### Ajouté
