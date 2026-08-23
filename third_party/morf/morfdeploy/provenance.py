@@ -117,6 +117,10 @@ def write_build_info(repo_root: Path, artifact: Path, *, project: str,
         "built_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
     dest = artifact.parent / BUILD_INFO_NAME
-    dest.write_text(json.dumps(info, indent=2, ensure_ascii=False) + "\n",
-                    encoding="utf-8")
+    payload = json.dumps(info, indent=2, ensure_ascii=False) + "\n"
+    try:
+        dest.write_text(payload, encoding="utf-8")
+    except PermissionError:
+        dest.unlink(missing_ok=True)
+        dest.write_text(payload, encoding="utf-8")
     return dest

@@ -276,6 +276,9 @@ def build_deb(manifest: Manifest, binary: Path, target, out_dir: Path) -> Path:
         opt.mkdir(parents=True)
         shutil.copy2(binary, opt / manifest.binary_name())
         (opt / manifest.binary_name()).chmod(0o755)
+        version_file = manifest.repo_root / "VERSION"
+        if version_file.is_file():
+            shutil.copy2(version_file, opt / "VERSION")
 
         # A privileged helper is an explicit, opt-in package fact. It never
         # shares the application directory: the service account must not be
@@ -490,14 +493,12 @@ def package(project, manifest: Manifest, target_name, no_build: bool,
             write_build_info(manifest.repo_root, pack_binary,
                              project=manifest.display_name)
         except OSError:
-            if os.access(binary.parent, os.W_OK):
-                raise
             stamp_tmp = tempfile.TemporaryDirectory(prefix="morfdeploy-stamp-")
             pack_binary = Path(stamp_tmp.name) / binary.name
             shutil.copy2(binary, pack_binary)
             write_build_info(manifest.repo_root, pack_binary,
                              project=manifest.display_name)
-            print(f"  build dir not writable ({binary.parent}); "
+            print(f"  cannot write build-info.json beside {binary}; "
                   f"provenance stamped in {stamp_tmp.name}")
     else:
         pack_binary = locate_binary(manifest, build_dir)
