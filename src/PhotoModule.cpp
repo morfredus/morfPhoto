@@ -381,6 +381,10 @@ QJsonArray PhotoModule::listSources() const {
     return m_sourceManager.listSources();
 }
 
+bool PhotoModule::helperReady(QJsonObject* out, QString* error) const {
+    return m_sourceManager.helperReady(out, error);
+}
+
 bool PhotoModule::addFolder(const QString& path, const QVariant& label, bool recursive,
                             bool removable, const QVariant& volumeLabel,
                             QJsonObject* out, QString* error) {

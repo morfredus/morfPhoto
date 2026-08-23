@@ -42,6 +42,10 @@ public:
                    QJsonObject* out, QString* error);
 
     QJsonArray  listSources() const;
+
+    // Present, droits, et verbe `probe` (setuid reel). Sans ca PhotoHub n'envoie
+    // pas le mot de passe.
+    bool helperReady(QJsonObject* out, QString* error) const;
     QStringList mountpoints() const;
 
     // Redemarrage systemd via le helper, APRES reponse HTTP : le JSON a deja

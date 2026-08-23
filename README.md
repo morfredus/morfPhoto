@@ -2,7 +2,7 @@
 
 *Read in another language: **English** (this document) · [Français](README.fr.md).*
 
-[![Version](https://img.shields.io/badge/version-0.9.8-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.9.9-blue)](CHANGELOG.md)
 ![C++](https://img.shields.io/badge/C%2B%2B-17-00599C?logo=cplusplus)
 ![Qt](https://img.shields.io/badge/Qt-6-41CD52?logo=qt)
 ![Build](https://img.shields.io/badge/CMake-3.21+-064F8C?logo=cmake)
@@ -72,6 +72,7 @@ PATCH  /api/v1/folders/{id}      update enabled, removable, volume_label, analyt
 DELETE /api/v1/folders/{id}      soft retire (history preserved)
 GET  /api/v1/roots               allowed roots (config + validated SMB mounts)
 GET  /api/v1/sources             pushed SMB sources
+GET  /api/v1/sources/ready       privileged helper startable
 POST /api/v1/sources             mount a Windows share under /mnt/photos_<hostname>
 POST /api/v1/purge               PERMANENT deletion: {"scope":"folder|year|camera|all","value":...}
 ```

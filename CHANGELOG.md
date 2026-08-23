@@ -3,6 +3,14 @@
 Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/)
 et du [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [0.9.9] - 2026-08-23
+
+### Ajouté
+
+- `GET /api/v1/sources/ready` et verbe helper `probe` : PhotoHub vérifie que le
+  helper setuid est présent, traversable et démarrable avant d'envoyer un mot
+  de passe. Un POST `/sources` refait le même contrôle.
+
 ## [0.9.8] - 2026-08-22
 
 ### Modifié

@@ -2,7 +2,7 @@
 
 *Lire dans une autre langue : [English](README.md) · **Français** (ce document).*
 
-[![Version](https://img.shields.io/badge/version-0.9.8-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.9.9-blue)](CHANGELOG.md)
 ![C++](https://img.shields.io/badge/C%2B%2B-17-00599C?logo=cplusplus)
 ![Qt](https://img.shields.io/badge/Qt-6-41CD52?logo=qt)
 ![Build](https://img.shields.io/badge/CMake-3.21+-064F8C?logo=cmake)
@@ -75,6 +75,7 @@ PATCH  /api/v1/folders/{id}      modifie enabled, removable, volume_label, analy
 DELETE /api/v1/folders/{id}      retrait doux (historique conservé)
 GET  /api/v1/roots               racines autorisées (config + montages SMB validés)
 GET  /api/v1/sources             sources SMB poussées
+GET  /api/v1/sources/ready       helper privilégié démarrable
 POST /api/v1/sources             monte un partage Windows sous /mnt/photos_<hostname>
 POST /api/v1/purge               suppression DÉFINITIVE : {"scope":"folder|year|camera|all","value":...}
 ```

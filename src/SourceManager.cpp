@@ -14,6 +14,7 @@
 #include <QJsonDocument>
 #include <QDateTime>
 #include <QProcess>
+#include <QFileInfo>
 
 #include <utility>
 
@@ -64,6 +65,80 @@ QJsonArray SourceManager::listSources() const {
     return out;
 }
 
+bool SourceManager::helperReady(QJsonObject* out, QString* error) const {
+    auto fail = [&](const QString& code, const QString& detail) {
+        if (error) *error = detail;
+        if (out) {
+            (*out)[QStringLiteral("ok")] = false;
+            (*out)[QStringLiteral("code")] = code;
+            (*out)[QStringLiteral("detail")] = detail;
+            (*out)[QStringLiteral("path")] = m_helperPath;
+        }
+        return false;
+    };
+#ifndef Q_OS_UNIX
+    if (out) {
+        (*out)[QStringLiteral("ok")] = false;
+        (*out)[QStringLiteral("code")] = QStringLiteral("linux_only");
+        (*out)[QStringLiteral("detail")] = QStringLiteral(
+            "le helper privilegie ne sert que sur l'hote Linux de morfPhoto");
+    }
+    if (error) *error = QStringLiteral("le helper privilegie ne sert que sous Linux");
+    return false;
+#else
+    const QFileInfo fi(m_helperPath);
+    const QFileInfo dir(fi.absolutePath());
+    if (!dir.exists() || !dir.isDir())
+        return fail(QStringLiteral("helper_dir_absent"),
+                    QStringLiteral("dossier du helper absent (%1) : reinstaller le paquet morfPhoto")
+                        .arg(dir.absoluteFilePath()));
+    // x sur un dossier = le parcourir. 750 root:root : le service ne voit pas le binaire.
+    if (!dir.isReadable() || !dir.isExecutable())
+        return fail(QStringLiteral("helper_dir_inaccessible"),
+                    QStringLiteral(
+                        "dossier du helper non traversable (%1). Attendu : 750 root:<compte du service>")
+                        .arg(dir.absoluteFilePath()));
+    if (!fi.exists() || !fi.isFile())
+        return fail(QStringLiteral("helper_absent"),
+                    QStringLiteral("helper privilegie absent (%1) : reinstaller le paquet morfPhoto")
+                        .arg(m_helperPath));
+    if (!fi.isExecutable())
+        return fail(QStringLiteral("helper_not_executable"),
+                    QStringLiteral(
+                        "helper present mais non executable par ce compte (%1). "
+                        "Attendu : 4750 root:<compte du service>")
+                        .arg(m_helperPath));
+
+    QProcess helper;
+    helper.start(m_helperPath, {QStringLiteral("probe")});
+    if (!helper.waitForStarted(8000)) {
+        return fail(QStringLiteral("helper_not_startable"),
+                    QStringLiteral("helper non demarrable (%1) : %2")
+                        .arg(m_helperPath, helper.errorString()));
+    }
+    helper.waitForFinished(8000);
+    const QJsonObject report = QJsonDocument::fromJson(helper.readAllStandardOutput()).object();
+    const bool ok = helper.exitStatus() == QProcess::NormalExit
+        && helper.exitCode() == 0
+        && report.value(QStringLiteral("ok")).toBool();
+    if (!ok) {
+        const QString detail = report.value(QStringLiteral("detail")).toString().trimmed();
+        const QString errOut = QString::fromUtf8(helper.readAllStandardError()).trimmed();
+        return fail(report.value(QStringLiteral("code")).toString(QStringLiteral("helper_probe_failed")),
+                    !detail.isEmpty() ? detail
+                    : (!errOut.isEmpty() ? errOut
+                       : QStringLiteral("le helper a refuse le controle probe")));
+    }
+    if (out) {
+        *out = report;
+        (*out)[QStringLiteral("ok")] = true;
+        (*out)[QStringLiteral("path")] = m_helperPath;
+        (*out)[QStringLiteral("code")] = QStringLiteral("probe_ok");
+    }
+    return true;
+#endif
+}
+
 void SourceManager::scheduleServiceRestart() const {
 #ifdef Q_OS_UNIX
     QProcess::startDetached(m_helperPath, {QStringLiteral("restart-service")});
@@ -97,6 +172,12 @@ bool SourceManager::addSource(const QString& host, const QString& share, const Q
         return false;
     }
     const QString mountpoint = mountpointForSlug(slug);
+
+    QJsonObject ready;
+    if (!helperReady(&ready, error)) {
+        if (out) *out = ready;
+        return false;
+    }
 
     QProcess helper;
     helper.start(m_helperPath, {QStringLiteral("mount"), host, share, slug});

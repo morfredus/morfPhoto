@@ -47,6 +47,9 @@ inline void fillAnnouncedDetail(morfbeacon::PresenceConfig& pc) {
         {QStringLiteral("POST"),   QStringLiteral("/api/v1/folders"),         QStringLiteral("declare une selection (sous racine)")},
         {QStringLiteral("PATCH"),  QStringLiteral("/api/v1/folders/{id}"),    QStringLiteral("active / desactive")},
         {QStringLiteral("DELETE"), QStringLiteral("/api/v1/folders/{id}"),    QStringLiteral("retrait doux (historique conserve)")},
+        {QStringLiteral("GET"),    QStringLiteral("/api/v1/sources"),         QStringLiteral("sources SMB poussees")},
+        {QStringLiteral("GET"),    QStringLiteral("/api/v1/sources/ready"),   QStringLiteral("helper privilegie demarrable")},
+        {QStringLiteral("POST"),   QStringLiteral("/api/v1/sources"),         QStringLiteral("monte un partage sous /mnt/photos_<hostname>")},
     };
 }
 

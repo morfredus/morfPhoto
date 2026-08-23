@@ -125,6 +125,19 @@ PhotoApi::Result PhotoApi::handle(const QByteArray& method, const QString& path,
     //        /mnt/photos_<hostname> via le helper, valide le CIFS, persiste
     //        fstab + racine. Le mot de passe n'est jamais stocké par le service.
     if (!seg.isEmpty() && seg[0] == QLatin1String("sources")) {
+        if (seg.size() == 2 && seg[1] == QLatin1String("ready")) {
+            if (method != "GET")
+                return error(405, QStringLiteral("method_not_allowed"));
+            QJsonObject out;
+            QString err;
+            if (!m_module->helperReady(&out, &err)) {
+                if (!out.contains(QStringLiteral("detail")))
+                    out[QStringLiteral("detail")] = err;
+                out[QStringLiteral("ok")] = false;
+                return {503, toBytes(out)};
+            }
+            return {200, toBytes(out)};
+        }
         if (seg.size() != 1)
             return error(404, QStringLiteral("not_found"), path);
         if (method == "GET")

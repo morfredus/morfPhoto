@@ -76,6 +76,10 @@ public:
                           QJsonObject* out, QString* error);
     // Sources connues, chacune annotee `mounted`.
     QJsonArray  listSources() const;
+
+    // Verifie que le helper privilegie est present, traversable et demarrable
+    // (verbe `probe`) AVANT d'accepter un mot de passe SMB.
+    bool        helperReady(QJsonObject* out, QString* error) const;
     // Ajoute une sélection. Refuse (false + *error) si hors racine autorisée.
     // `removable` : le dossier vit sur un support amovible (archive), son absence ne
     // vaudra jamais suppression. `volumeLabel` : nom du support (QVariant vide = aucun).

@@ -19,6 +19,7 @@
  *   - la racine n'est ajoutee au JSON qu'apres validation reelle du montage.
  *
  * Verbes :
+ *   probe
  *   mount   <host> <share> <slug>   (identifiants : 2 lignes sur stdin)
  *   unmount <mountpoint>
  *   restart-service
@@ -677,10 +678,20 @@ int main(int argc, char** argv) {
         return doUnmount(mountpoint);
     }
 
+    if (args.size() == 2 && args.at(1) == QStringLiteral("probe")) {
+        Report r;
+        r.ok = true;
+        r.code = QStringLiteral("probe_ok");
+        r.message = QStringLiteral("helper privilegie demarrable");
+        addStep(r, QStringLiteral("helper_startable"), true);
+        addStep(r, QStringLiteral("real_root"), true);
+        return emitReport(r, 0);
+    }
+
     if (args.size() == 2 && args.at(1) == QStringLiteral("restart-service"))
         return doRestart();
 
     return refuse(QStringLiteral(
-        "usage : mount <host> <share> <slug> | unmount <mountpoint> | restart-service"));
+        "usage : probe | mount <host> <share> <slug> | unmount <mountpoint> | restart-service"));
 #endif
 }
