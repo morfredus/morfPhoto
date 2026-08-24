@@ -48,6 +48,9 @@ public:
     bool start() override;
     void stop() override;
     QJsonObject statusJson() const override;
+    // Activite en cours (contrat `activity/1`) : { type:"indexation", ... } pendant
+    // une passe, objet vide sinon. Lu en temps reel par morfMonitor via /status.
+    QJsonObject activityJson() const override;
 
     // --- Lectures (API HTTP, thread principal) ---
     QJsonObject summary() const;
@@ -111,6 +114,13 @@ private:
     void doPass(IndexMode mode, QVector<int> folderIds, QString trigger); // thread du pool
     QString matchingRoot(const QString& path) const;
     QJsonObject observableState() const;
+    // Declare une indexation TERMINEE a morfAnalytics (historique), best-effort et
+    // jamais bloquant : contrat `activity/1` §6. URL d'ingestion lue dans
+    // l'environnement (MORFANALYTICS_ACTIVITY_URL) ou le fichier admin partage
+    // /etc/morfsystem/monitor-activity-url. Aucune source => rien n'est emis.
+    // Appelee depuis le thread de passe, apres la fin de l'indexation.
+    void reportIndexActivity(qint64 startEpoch, qint64 filesSeen,
+                             int foldersTotal, const QString& error) const;
 
     // Configuration (lue depuis les params du module).
     QString     m_dbPath;
@@ -141,7 +151,8 @@ private:
 
     mutable QMutex m_stateMutex;         // protège le drapeau et l'état observable
     bool           m_indexing = false;
-    QString        m_startedAt;
+    QString        m_startedAt;          // ISO UTC, lisible (API existante)
+    qint64         m_startedAtEpoch = 0; // meme instant en epoch s (contrat activity)
     QString        m_lastError;
     int            m_passCounter = 0;
     QFuture<void>  m_pass;

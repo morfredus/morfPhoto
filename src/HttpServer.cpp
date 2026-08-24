@@ -202,6 +202,13 @@ QByteArray HttpServer::buildStatusJson() const {
     o["ts"]       = static_cast<double>(QDateTime::currentSecsSinceEpoch());
     o["metrics"]  = m_registry ? m_registry->metrics() : QJsonObject{};
 
+    // Activite EN COURS (contrat generique `activity/1`) : champ OPTIONNEL, present
+    // seulement quand un module travaille. morfMonitor le lit en temps reel. Jamais
+    // dans le heartbeat beacon. Voir morfSystem/docs/CONTRAT-ACTIVITE.md.
+    const QJsonObject activity = m_registry ? m_registry->activity() : QJsonObject{};
+    if (!activity.isEmpty())
+        o["activity"] = activity;
+
     // Detail annonce (API) depuis le point UNIQUE. MODELE : tout service
     // morfSystem se decrit ainsi. describeService n'emet `web_ui` que si une
     // interface est declaree dans fillAnnouncedDetail ; ce squelette etant

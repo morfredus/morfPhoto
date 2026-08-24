@@ -3,6 +3,21 @@
 Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/)
 et du [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [0.10.0] - 2026-08-24
+
+### Ajouté
+
+- Support du contrat générique **activité en cours** (`activity/1`,
+  `morfSystem/docs/CONTRAT-ACTIVITE.md`). Pendant une indexation, `/status`
+  expose un objet optionnel `activity` (type, état, début, avancement, dossier
+  courant), lu en temps réel par morfMonitor. Absent quand rien ne tourne ;
+  jamais dans le heartbeat beacon.
+- À la fin d'une passe d'indexation, l'activité **terminée** est déclarée à
+  morfAnalytics (`POST /api/monitor/activity`) pour historisation : best-effort,
+  jamais bloquant, URL d'ingestion lue dans `MORFANALYTICS_ACTIVITY_URL` ou
+  `/etc/morfsystem/monitor-activity-url` (même convention que morfDeploy). Sans
+  cible configurée, rien n'est émis : morfPhoto ne dépend jamais de morfAnalytics.
+
 ## [0.9.10] - 2026-08-23
 
 ### Corrigé

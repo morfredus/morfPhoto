@@ -14,7 +14,16 @@
 #include <QtConcurrent>
 #include <QDateTime>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QMutexLocker>
+#include <QHostInfo>
+#include <QFile>
+#include <QUrl>
+#include <QEventLoop>
+#include <QNetworkAccessManager>
+#include <QNetworkRequest>
+#include <QNetworkReply>
+#include <QLoggingCategory>
 
 namespace morfphoto {
 
@@ -149,6 +158,7 @@ QJsonObject PhotoModule::triggerIndex(IndexMode mode, const QVector<int>& folder
         }
         m_indexing  = true;
         m_startedAt = nowIso();
+        m_startedAtEpoch = QDateTime::currentSecsSinceEpoch();
         m_lastError.clear();
         // Repartir d'une progression vierge : l'ancienne passe ne doit pas laisser
         // de compteurs résiduels visibles au tout début de la nouvelle.
@@ -210,10 +220,23 @@ void PhotoModule::doPass(IndexMode mode, QVector<int> folderIds, QString trigger
             error = QStringLiteral("ouverture de la base impossible pour la passe");
         }
     }
-    QMutexLocker lock(&m_stateMutex);
-    m_indexing = false;
-    m_lastError = error;
-    m_lastFoldersTotal = m_progFoldersTotal;
+    qint64 startEpoch = 0, filesSeen = 0;
+    int    foldersTotal = 0;
+    {
+        QMutexLocker lock(&m_stateMutex);
+        m_indexing = false;
+        m_lastError = error;
+        m_lastFoldersTotal = m_progFoldersTotal;
+        startEpoch   = m_startedAtEpoch;
+        filesSeen    = m_progFilesSeen;
+        foldersTotal = m_progFoldersTotal;
+    }
+
+    // Passe terminee : la declarer a morfAnalytics comme activite HISTORIQUE
+    // (contrat `activity/1` §6). Best-effort, hors verrou, jamais bloquant : une
+    // telemetrie muette ne doit pas peser sur l'indexation. On est deja dans le
+    // thread de passe, la synchronicite du POST (timeout court) est sans impact.
+    reportIndexActivity(startEpoch, filesSeen, foldersTotal, error);
 }
 
 QJsonObject PhotoModule::observableState() const {
@@ -284,6 +307,96 @@ QJsonObject PhotoModule::observableState() const {
                              "libimage-exiftool-perl.").arg(m_exiftoolBinary);
     o["last_error"] = err.isEmpty() ? QJsonValue(QJsonValue::Null) : QJsonValue(err);
     return o;
+}
+
+QJsonObject PhotoModule::activityJson() const {
+    // Contrat generique `activity/1` : pendant une passe, on decrit l'indexation
+    // en cours ; rien en cours => objet vide (le champ `activity` sera absent de
+    // /status). Meme source verrouillee que observableState().
+    QMutexLocker lock(&m_stateMutex);
+    if (!m_indexing)
+        return {};
+    QJsonObject a;
+    a["type"]  = QStringLiteral("indexation");
+    a["state"] = QStringLiteral("running");
+    if (m_startedAtEpoch > 0)
+        a["started_at"] = static_cast<double>(m_startedAtEpoch);
+    a["current"] = static_cast<double>(m_progFilesSeen);
+    if (m_progFilesTotal >= 0) {
+        a["total"] = static_cast<double>(m_progFilesTotal);
+        double pct;
+        if (m_progFilesTotal == 0) {
+            pct = m_progFilesTotalFinal ? 100.0 : 0.0;
+        } else {
+            pct = 100.0 * double(m_progFilesSeen) / double(m_progFilesTotal);
+            // Tant que le total peut grandir, ne jamais afficher 100 % : le
+            // denominateur n'est pas clos, un 100 % mentirait.
+            if (!m_progFilesTotalFinal && pct > 99.0)
+                pct = 99.0;
+        }
+        a["progress_percent"] = qRound(pct * 10.0) / 10.0;
+    }
+    if (!m_progCurrentFolder.isEmpty())
+        a["detail"] = m_progCurrentFolder;
+    return a;
+}
+
+void PhotoModule::reportIndexActivity(qint64 startEpoch, qint64 filesSeen,
+                                      int foldersTotal, const QString& error) const {
+    // Ou envoyer : variable d'environnement d'abord, puis fichier admin partage
+    // (meme convention que morfDeploy). Aucune source => rien n'est emis :
+    // morfPhoto ne depend jamais de morfAnalytics.
+    QString url = qEnvironmentVariable("MORFANALYTICS_ACTIVITY_URL").trimmed();
+    if (url.isEmpty()) {
+        QFile f(QStringLiteral("/etc/morfsystem/monitor-activity-url"));
+        if (f.exists() && f.open(QIODevice::ReadOnly | QIODevice::Text))
+            url = QString::fromUtf8(f.readAll()).trimmed();
+    }
+    if (url.isEmpty())
+        return;
+
+    const qint64 end   = QDateTime::currentSecsSinceEpoch();
+    const qint64 start = startEpoch > 0 ? startEpoch : end;
+
+    QJsonObject meta;
+    meta["files"]   = static_cast<double>(filesSeen);
+    meta["folders"] = foldersTotal;
+    if (!error.isEmpty())
+        meta["error"] = error;
+
+    QJsonObject payload;
+    payload["type"]     = QStringLiteral("indexation");
+    payload["project"]  = QStringLiteral("morfPhoto");
+    payload["machine"]  = QHostInfo::localHostName();
+    payload["start_ts"] = static_cast<double>(start);
+    payload["end_ts"]   = static_cast<double>(end);
+    payload["status"]   = error.isEmpty() ? QStringLiteral("success")
+                                          : QStringLiteral("failed");
+    payload["metadata"] = meta;
+
+    // POST synchrone avec timeout court : on est dans le thread de passe (deja
+    // termine cote indexation), donc bloquer un instant ici n'impacte pas le
+    // service. QNAM + QEventLoop local pour ne suspendre que ce thread.
+    QNetworkAccessManager nam;
+    QNetworkRequest req{QUrl(url)};
+    req.setHeader(QNetworkRequest::ContentTypeHeader, QByteArrayLiteral("application/json"));
+    QNetworkReply* reply = nam.post(req, QJsonDocument(payload).toJson(QJsonDocument::Compact));
+
+    QEventLoop loop;
+    QTimer timer;
+    timer.setSingleShot(true);
+    QObject::connect(&timer, &QTimer::timeout, &loop, &QEventLoop::quit);
+    QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+    timer.start(3000);
+    loop.exec();
+    if (!reply->isFinished())
+        reply->abort();                 // timeout : on renonce, sans bruit ni blocage
+
+    if (reply->error() != QNetworkReply::NoError)
+        qWarning().noquote() << "morfPhoto: activite non signalee a morfAnalytics ("
+                             << reply->errorString()
+                             << ") - sans consequence pour l'indexation";
+    reply->deleteLater();
 }
 
 QJsonObject PhotoModule::indexStatus() const {

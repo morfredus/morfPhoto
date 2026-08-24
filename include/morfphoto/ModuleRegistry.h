@@ -46,6 +46,11 @@ public:
     QJsonObject metrics() const override;            // resume pour /status
     QString     state() const override;              // ok | warning | starting
 
+    // Activite EN COURS agregee (contrat `activity/1`) : le premier module qui
+    // en declare une. Objet vide si aucun module ne travaille. Expose dans
+    // /status et lu par morfMonitor. Voir IModule::activityJson().
+    QJsonObject activity() const;
+
 signals:
     void updated(const QString& id);
 

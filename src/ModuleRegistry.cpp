@@ -71,4 +71,17 @@ QString ModuleRegistry::state() const {
     return QStringLiteral("ok");
 }
 
+QJsonObject ModuleRegistry::activity() const {
+    // Le premier module qui declare une activite en cours l'emporte. Le contrat
+    // `activity/1` prevoit une activite courante par service (objet unique) ; si
+    // plusieurs modules travaillaient un jour en parallele, ce serait une
+    // evolution explicite du contrat, pas un changement silencieux ici.
+    for (IModule* m : m_modules) {
+        const QJsonObject a = m->activityJson();
+        if (!a.isEmpty())
+            return a;
+    }
+    return {};
+}
+
 } // namespace morfphoto
