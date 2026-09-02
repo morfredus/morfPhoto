@@ -10,6 +10,7 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QUrl>
 #include <QUrlQuery>
 #include <QStringList>
 
@@ -75,12 +76,16 @@ PhotoApi::Result PhotoApi::handle(const QByteArray& method, const QString& path,
                 return error(400, QStringLiteral("bad_request"), QStringLiteral("page/page_size invalide"));
             pageSize = qMin(pageSize, kMaxPageSize);
             static const QStringList kFilters =
-                {"year", "camera", "lens", "type", "folder", "state"};
+                {"year", "camera", "lens", "type", "folder", "directory", "state"};
             QVariantMap filters;
             for (const QString& key : kFilters) {
                 if (!query.hasQueryItem(key))
                     continue;
-                const QString v = query.queryItemValue(key);
+                // Un chemin de repertoire porte des '/' encodes en %2F que QUrlQuery garde
+                // encodes par defaut : le decoder entierement pour retrouver le chemin reel.
+                const QString v = (key == QLatin1String("directory"))
+                    ? query.queryItemValue(key, QUrl::FullyDecoded)
+                    : query.queryItemValue(key);
                 if (key == QLatin1String("year") || key == QLatin1String("folder")) {
                     bool okInt = false;
                     const int n = v.toInt(&okInt);
@@ -110,6 +115,101 @@ PhotoApi::Result PhotoApi::handle(const QByteArray& method, const QString& path,
         if (!found)
             return error(404, QStringLiteral("not_found"), QStringLiteral("photo %1 inconnue").arg(id));
         return ok(photo);
+    }
+
+    // ---- /contexts : repertoires + leur contexte (ecran de qualification PhotoHub) ----
+    if (!seg.isEmpty() && seg[0] == QLatin1String("contexts")) {
+        if (seg.size() != 1)
+            return error(404, QStringLiteral("not_found"), path);
+        if (method != "GET")
+            return error(405, QStringLiteral("method_not_allowed"));
+        QString status;
+        if (query.hasQueryItem(QStringLiteral("status"))) {
+            status = query.queryItemValue(QStringLiteral("status"));
+            static const QStringList kStates = {"qualified", "unqualified", "invalid"};
+            if (!kStates.contains(status))
+                return error(400, QStringLiteral("bad_request"),
+                             QStringLiteral("status inconnu (qualified|unqualified|invalid): %1").arg(status));
+        }
+        return items(m_module->listContexts(status));
+    }
+
+    // ---- /context : contexte d'UN repertoire (lecture, ecriture, retrait) ----
+    // GET  ?directory=... : le contexte, ou { status: "unqualified" }.
+    // PUT  {directory, context, subject, motif?, description?} : ecrit `.morfphoto.json`
+    //      (morfPhoto est l'unique ecrivain). context ET subject obligatoires (contrat V2).
+    // DELETE ?directory=... : retire le fichier (le dossier redevient non qualifie).
+    if (!seg.isEmpty() && seg[0] == QLatin1String("context")) {
+        if (seg.size() != 1)
+            return error(404, QStringLiteral("not_found"), path);
+
+        if (method == "GET") {
+            // FullyDecoded : un chemin porte des '/' encodes en %2F que QUrlQuery
+            // garde encodes par defaut (semantique des delimiteurs) ; on veut le chemin reel.
+            const QString directory = query.queryItemValue(QStringLiteral("directory"), QUrl::FullyDecoded);
+            if (directory.isEmpty())
+                return error(400, QStringLiteral("bad_request"), QStringLiteral("`directory` obligatoire"));
+            return ok(m_module->getContext(directory));
+        }
+        if (method == "PUT") {
+            const QJsonObject in = QJsonDocument::fromJson(body).object();
+            const QString directory = in.value(QStringLiteral("directory")).toString();
+            const QString context   = in.value(QStringLiteral("context")).toString();
+            const QString subject   = in.value(QStringLiteral("subject")).toString();
+            if (directory.isEmpty())
+                return error(400, QStringLiteral("bad_request"), QStringLiteral("`directory` obligatoire"));
+            if (context.isEmpty() || subject.isEmpty())
+                return error(400, QStringLiteral("bad_request"),
+                             QStringLiteral("`context` et `subject` sont obligatoires (contrat V2)"));
+            const QVariant motif = in.contains(QStringLiteral("motif"))
+                ? QVariant(in.value(QStringLiteral("motif")).toString()) : QVariant();
+            const QVariant description = in.contains(QStringLiteral("description"))
+                ? QVariant(in.value(QStringLiteral("description")).toString()) : QVariant();
+            QJsonObject out;
+            QString err;
+            if (!m_module->putContext(directory, context, subject, motif, description, &out, &err)) {
+                const int code = err.contains(QStringLiteral("racine")) ? 403 : 400;
+                return error(code, code == 403 ? QStringLiteral("root_violation")
+                                               : QStringLiteral("bad_request"), err);
+            }
+            return ok(out);
+        }
+        if (method == "DELETE") {
+            // FullyDecoded : un chemin porte des '/' encodes en %2F que QUrlQuery
+            // garde encodes par defaut (semantique des delimiteurs) ; on veut le chemin reel.
+            const QString directory = query.queryItemValue(QStringLiteral("directory"), QUrl::FullyDecoded);
+            if (directory.isEmpty())
+                return error(400, QStringLiteral("bad_request"), QStringLiteral("`directory` obligatoire"));
+            QJsonObject out;
+            QString err;
+            if (!m_module->deleteContext(directory, &out, &err)) {
+                const int code = err.contains(QStringLiteral("racine")) ? 403 : 400;
+                return error(code, code == 403 ? QStringLiteral("root_violation")
+                                               : QStringLiteral("bad_request"), err);
+            }
+            return ok(out);
+        }
+        return error(405, QStringLiteral("method_not_allowed"));
+    }
+
+    // ---- /thumbnail : vignette JPEG d'un fichier (apercu, ex. pour PhotoHub) ----
+    // GET ?path=<chemin absolu> : renvoie une vignette image/jpeg (apercu embarque
+    // extrait par exiftool, JPEG comme RAW). morfPhoto reste souverain sur le disque :
+    // PhotoHub, client pur, ne lit jamais les fichiers -- il demande la vignette ici.
+    if (!seg.isEmpty() && seg[0] == QLatin1String("thumbnail")) {
+        if (seg.size() != 1)
+            return error(404, QStringLiteral("not_found"), path);
+        if (method != "GET")
+            return error(405, QStringLiteral("method_not_allowed"));
+        const QString file = query.queryItemValue(QStringLiteral("path"), QUrl::FullyDecoded);
+        if (file.isEmpty())
+            return error(400, QStringLiteral("bad_request"), QStringLiteral("`path` obligatoire"));
+        bool okThumb = false;
+        const QByteArray jpeg = m_module->thumbnail(file, &okThumb);
+        if (!okThumb)
+            return error(404, QStringLiteral("not_found"),
+                         QStringLiteral("aucune vignette disponible pour ce fichier"));
+        return {200, jpeg, QByteArrayLiteral("image/jpeg")};
     }
 
     // ---- /roots : racines autorisees (lecture seule ; la config est souveraine) ----

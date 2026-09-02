@@ -13,6 +13,7 @@
 #include <QJsonDocument>
 #include <QJsonValue>
 #include <QVariant>
+#include <QDateTime>
 #include <QFileInfo>
 #include <QDir>
 #include <QDebug>
@@ -106,6 +107,7 @@ QString filterColumn(const QString& key) {
     if (key == QLatin1String("lens"))   return QStringLiteral("lens");
     if (key == QLatin1String("type"))   return QStringLiteral("file_type");
     if (key == QLatin1String("folder")) return QStringLiteral("folder_id");
+    if (key == QLatin1String("directory")) return QStringLiteral("directory");
     if (key == QLatin1String("state"))  return QStringLiteral("state");
     return {};
 }
@@ -474,6 +476,38 @@ QJsonObject PhotoRepository::summary() {
                                                 "WHERE ") + analyzablePredicate() +
                                                 QStringLiteral(" AND lens IS NOT NULL"));
     o["years"]          = yearsArr;
+
+    // Couverture du CONTEXTE (morfphoto-context/2), par RÉPERTOIRE de photos présentes.
+    // Trois états distincts : qualified (ligne ok), invalid (ligne invalide), unqualified
+    // (aucun `.morfphoto.json` valide). unqualified n'est jamais fusionné avec INCONNU,
+    // qui est une valeur de `context` (donc comptée parmi les qualifiés).
+    const int dirsTotal = scalar(QStringLiteral(
+        "SELECT COUNT(*) FROM (SELECT DISTINCT directory FROM files WHERE state='present')"));
+    const int qualified = scalar(QStringLiteral(
+        "SELECT COUNT(*) FROM folder_contexts c WHERE c.status='ok' AND EXISTS "
+        "(SELECT 1 FROM files f WHERE f.directory=c.directory AND f.state='present')"));
+    const int invalid = scalar(QStringLiteral(
+        "SELECT COUNT(*) FROM folder_contexts c WHERE c.status='invalid' AND EXISTS "
+        "(SELECT 1 FROM files f WHERE f.directory=c.directory AND f.state='present')"));
+    auto coverageBy = [this](const QString& column) -> QJsonObject {
+        QJsonObject by;
+        QSqlQuery q(db());
+        q.exec(QStringLiteral(
+            "SELECT c.%1 AS v, COUNT(*) AS n FROM folder_contexts c "
+            "WHERE c.status='ok' AND c.%1 IS NOT NULL AND EXISTS "
+            "(SELECT 1 FROM files f WHERE f.directory=c.directory AND f.state='present') "
+            "GROUP BY c.%1 ORDER BY n DESC, v").arg(column));
+        while (q.next())
+            by.insert(q.value(0).toString(), q.value(1).toInt());
+        return by;
+    };
+    QJsonObject contexts;
+    contexts["qualified"]   = qualified;
+    contexts["invalid"]     = invalid;
+    contexts["unqualified"] = dirsTotal - qualified - invalid;
+    contexts["by_context"]  = coverageBy(QStringLiteral("context"));
+    contexts["by_subject"]  = coverageBy(QStringLiteral("subject"));
+    o["contexts"] = contexts;
     return o;
 }
 
@@ -567,8 +601,8 @@ QJsonObject PhotoRepository::photoDataset() {
     // Dictionnaires : chaque chaine repetee (boitier, objectif, type) n'est stockee
     // qu'une fois ; les colonnes ne portent que son index. Un QHash retient l'index
     // deja attribue, un QJsonArray garde l'ordre d'apparition (l'index EST la position).
-    QJsonArray camDict, lensDict, typeDict;
-    QHash<QString, int> camIdx, lensIdx, typeIdx;
+    QJsonArray camDict, lensDict, typeDict, ctxDict, subjDict;
+    QHash<QString, int> camIdx, lensIdx, typeIdx, ctxIdx, subjIdx;
     auto intern = [](const QVariant& v, QJsonArray& dict, QHash<QString, int>& idx) -> QJsonValue {
         if (v.isNull())
             return QJsonValue::Null;   // valeur absente preservee (jamais un index bidon)
@@ -587,6 +621,7 @@ QJsonObject PhotoRepository::photoDataset() {
     };
 
     QJsonArray takenAt, camera, lens, fileType, focal, focal35, aperture, iso, shutterS, folder;
+    QJsonArray context, subject;   // contexte photographique (morfphoto-context/2)
     QJsonArray fingerprint;   // empreinte de dedup (une par photo), pour l'analyse multi-sources
     int count = 0;
 
@@ -594,11 +629,16 @@ QJsonObject PhotoRepository::photoDataset() {
     // Un seul parcours des photos presentes ; ordre chronologique stable et utile.
     // filename et size ne sont PAS exposes : ils servent uniquement a calculer
     // l'empreinte (le dataset reste anonyme, seule l'empreinte opaque en sort).
+    // Jointure GAUCHE sur folder_contexts (cle = repertoire) : context/subject sont deux
+    // dimensions INDEPENDANTES, null si le dossier n'est pas qualifie. La distinction
+    // null (aucun .morfphoto.json) vs "INCONNU" (valeur choisie) est ainsi preservee.
     q.exec(QStringLiteral(
-        "SELECT taken_at, camera_model, lens, file_type, focal_length, focal_length_35mm, "
-        "aperture, iso, shutter_speed_s, folder_id, filename, size FROM files WHERE ")
+        "SELECT f.taken_at, f.camera_model, f.lens, f.file_type, f.focal_length, "
+        "f.focal_length_35mm, f.aperture, f.iso, f.shutter_speed_s, f.folder_id, "
+        "f.filename, f.size, c.context, c.subject "
+        "FROM files f LEFT JOIN folder_contexts c ON c.directory = f.directory WHERE ")
         + analyzablePredicate() +
-        QStringLiteral(" ORDER BY taken_at IS NULL, taken_at, id"));
+        QStringLiteral(" ORDER BY f.taken_at IS NULL, f.taken_at, f.id"));
     while (q.next()) {
         takenAt.append(num(q.value(0)));
         camera.append(intern(q.value(1), camDict, camIdx));
@@ -612,6 +652,8 @@ QJsonObject PhotoRepository::photoDataset() {
         folder.append(num(q.value(9)));
         fingerprint.append(fingerprintOf(q.value(10).toString(), q.value(11).toLongLong(),
                                          q.value(0).toString()));
+        context.append(intern(q.value(12), ctxDict, ctxIdx));
+        subject.append(intern(q.value(13), subjDict, subjIdx));
         ++count;
     }
 
@@ -619,10 +661,12 @@ QJsonObject PhotoRepository::photoDataset() {
         {"taken_at", takenAt}, {"camera", camera}, {"lens", lens}, {"file_type", fileType},
         {"focal_length", focal}, {"focal_length_35mm", focal35}, {"aperture", aperture},
         {"iso", iso}, {"shutter_speed_s", shutterS}, {"folder_id", folder},
+        {"context", context}, {"subject", subject},
         {"fingerprint", fingerprint},
     };
     QJsonObject dictionaries{
         {"camera", camDict}, {"lens", lensDict}, {"file_type", typeDict},
+        {"context", ctxDict}, {"subject", subjDict},
     };
 
     // Libellés des dossiers : la colonne folder_id porte l'identifiant brut ; cette
@@ -641,6 +685,155 @@ QJsonObject PhotoRepository::photoDataset() {
         {"count", count}, {"dictionaries", dictionaries}, {"columns", columns},
         {"folders", folders},
     };
+}
+
+// --- Contexte photographique par répertoire (morfphoto-context/2) -----------
+//
+// La table folder_contexts est une PROJECTION reconstructible des `.morfphoto.json`.
+// Le fichier disque reste souverain ; la base n'est qu'un cache d'index.
+
+void PhotoRepository::upsertContext(const FolderContext& ctx) {
+    // UPSERT par répertoire (clé unique) : une passe met à jour sans dupliquer.
+    const QString warnings = ctx.warnings.isEmpty()
+        ? QString() : ctx.warnings.join(QLatin1Char(','));
+    QSqlQuery q(db());
+    run(q, QStringLiteral(
+             "INSERT INTO folder_contexts "
+             "(directory, schema, context, subject, motif, description, created, updated, "
+             " source_mtime, status, warnings, error, indexed_at) "
+             "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) "
+             "ON CONFLICT(directory) DO UPDATE SET "
+             " schema=excluded.schema, context=excluded.context, subject=excluded.subject, "
+             " motif=excluded.motif, description=excluded.description, created=excluded.created, "
+             " updated=excluded.updated, source_mtime=excluded.source_mtime, "
+             " status=excluded.status, warnings=excluded.warnings, error=excluded.error, "
+             " indexed_at=excluded.indexed_at"),
+        {ctx.directory, ctx.schema, ctx.context, ctx.subject, ctx.motif, ctx.description,
+         ctx.created, ctx.updated, ctx.sourceMtime, ctx.status,
+         warnings.isEmpty() ? QVariant() : QVariant(warnings), ctx.error,
+         QDateTime::currentDateTimeUtc().toString(Qt::ISODate)});
+}
+
+void PhotoRepository::deleteContextRow(const QString& directory) {
+    QSqlQuery q(db());
+    run(q, QStringLiteral("DELETE FROM folder_contexts WHERE directory = ?"), {directory});
+}
+
+QHash<QString, qint64> PhotoRepository::knownContextMtimes() {
+    QHash<QString, qint64> out;
+    QSqlQuery q(db());
+    q.exec(QStringLiteral("SELECT directory, source_mtime FROM folder_contexts"));
+    while (q.next())
+        out.insert(q.value(0).toString(), q.value(1).toLongLong());
+    return out;
+}
+
+bool PhotoRepository::directoryHasPhotos(const QString& directory) {
+    QSqlQuery q(db());
+    run(q, QStringLiteral("SELECT 1 FROM files WHERE directory = ? AND state = 'present' LIMIT 1"),
+        {directory});
+    return q.next();
+}
+
+QJsonObject PhotoRepository::getContext(const QString& directory) {
+    QJsonObject o;
+    o["directory"]   = directory;
+    o["photo_count"] = 0;
+    {
+        QSqlQuery c(db());
+        run(c, QStringLiteral("SELECT COUNT(*) FROM files WHERE directory = ? AND state='present'"),
+            {directory});
+        if (c.next())
+            o["photo_count"] = c.value(0).toInt();
+    }
+    QSqlQuery q(db());
+    run(q, QStringLiteral(
+             "SELECT schema, context, subject, motif, description, created, updated, "
+             "status, warnings, error FROM folder_contexts WHERE directory = ?"),
+        {directory});
+    if (!q.next()) {
+        // Aucune ligne = aucun `.morfphoto.json` valide : NON QUALIFIÉ (distinct d'INCONNU).
+        o["status"] = QStringLiteral("unqualified");
+        return o;
+    }
+    // "invalid" en base reste "invalid" côté API ; sinon "qualified".
+    const QString st = q.value(7).toString();
+    o["status"]      = (st == QLatin1String("invalid")) ? QStringLiteral("invalid")
+                                                        : QStringLiteral("qualified");
+    auto sv = [](const QVariant& v) -> QJsonValue {
+        return v.isNull() ? QJsonValue(QJsonValue::Null) : QJsonValue(v.toString());
+    };
+    o["schema"]      = q.value(0).isNull() ? QJsonValue(QJsonValue::Null)
+                                           : QJsonValue(q.value(0).toInt());
+    o["context"]     = sv(q.value(1));
+    o["subject"]     = sv(q.value(2));
+    o["motif"]       = sv(q.value(3));
+    o["description"] = sv(q.value(4));
+    o["created"]     = sv(q.value(5));
+    o["updated"]     = sv(q.value(6));
+    const QString warnings = q.value(8).toString();
+    QJsonArray warr;
+    if (!warnings.isEmpty())
+        for (const QString& w : warnings.split(QLatin1Char(','), Qt::SkipEmptyParts))
+            warr.append(w);
+    o["warnings"]    = warr;
+    o["error"]       = sv(q.value(9));
+    return o;
+}
+
+QJsonArray PhotoRepository::listContexts(const QString& statusFilter) {
+    QJsonArray arr;
+    QSqlQuery q(db());
+    // Un répertoire par groupe (files.directory) contenant des photos PRÉSENTES, joint
+    // à son contexte éventuel. date = plus ancienne prise de vue du dossier (repli sur
+    // le nom du dossier plus bas). L'exclusion analytique n'entre PAS en jeu ici : la
+    // qualification concerne toute la photothèque indexée.
+    q.exec(QStringLiteral(
+        "SELECT f.directory AS directory, COUNT(*) AS photo_count, MIN(f.taken_at) AS date, "
+        "c.status, c.context, c.subject, c.motif, c.description, c.updated, c.warnings "
+        "FROM files f LEFT JOIN folder_contexts c ON c.directory = f.directory "
+        "WHERE f.state = 'present' "
+        "GROUP BY f.directory ORDER BY date IS NULL, date, f.directory"));
+    while (q.next()) {
+        const QString directory = q.value(0).toString();
+        const QVariant rawStatus = q.value(3);
+        // Statut EXPOSÉ : aucune ligne -> unqualified ; ligne invalide -> invalid ; sinon qualified.
+        QString status;
+        if (rawStatus.isNull())
+            status = QStringLiteral("unqualified");
+        else if (rawStatus.toString() == QLatin1String("invalid"))
+            status = QStringLiteral("invalid");
+        else
+            status = QStringLiteral("qualified");
+        if (!statusFilter.isEmpty() && statusFilter != status)
+            continue;
+
+        auto sv = [](const QVariant& v) -> QJsonValue {
+            return v.isNull() ? QJsonValue(QJsonValue::Null) : QJsonValue(v.toString());
+        };
+        QJsonObject o;
+        o["directory"]   = directory;
+        o["label"]       = QFileInfo(directory).fileName();
+        o["photo_count"] = q.value(1).toInt();
+        const QVariant date = q.value(2);
+        // date lisible AAAA-MM-JJ si connue, sinon nom du dossier (souvent daté).
+        o["date"] = date.isNull() ? QJsonValue(QFileInfo(directory).fileName())
+                                   : QJsonValue(date.toString().left(10));
+        o["status"]      = status;
+        o["context"]     = sv(q.value(4));
+        o["subject"]     = sv(q.value(5));
+        o["motif"]       = sv(q.value(6));
+        o["description"] = sv(q.value(7));
+        o["updated"]     = sv(q.value(8));
+        const QString warnings = q.value(9).toString();
+        QJsonArray warr;
+        if (!warnings.isEmpty())
+            for (const QString& w : warnings.split(QLatin1Char(','), Qt::SkipEmptyParts))
+                warr.append(w);
+        o["warnings"]    = warr;
+        arr.append(o);
+    }
+    return arr;
 }
 
 QJsonObject PhotoRepository::latestRun(bool* found) {

@@ -24,7 +24,10 @@ class PhotoApi {
 public:
     struct Result {
         int        code;
-        QByteArray body;   // JSON UTF-8
+        QByteArray body;   // JSON UTF-8 par defaut, ou binaire (voir contentType)
+        // Type MIME de la reponse. JSON par defaut ; certaines routes renvoient du
+        // binaire (ex. une vignette image/jpeg). Le serveur HTTP l'utilise tel quel.
+        QByteArray contentType = QByteArrayLiteral("application/json; charset=utf-8");
     };
 
     explicit PhotoApi(PhotoModule* module);

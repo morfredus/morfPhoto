@@ -23,7 +23,7 @@
 // -----------------------------------------------------------------------------
 namespace morfphoto {
 
-inline constexpr int kSchemaVersion = 4;
+inline constexpr int kSchemaVersion = 5;
 
 // Instructions de la migration 001 (création initiale). La colonne calculée
 // `taken_year` permet de regrouper par année sans reparser la date à chaque fois.
@@ -163,6 +163,41 @@ inline QStringList schemaV4Statements() {
     };
 }
 
+// Migration 005 : CONTEXTE PHOTOGRAPHIQUE par dossier (contrat morfphoto-context/2).
+// Chaque répertoire de photos peut porter un fichier `.morfphoto.json` (donnée
+// sémantique sur disque, source de vérité). Cette table en est la PROJECTION
+// reconstructible, clé = le répertoire réel (files.directory). Aucune colonne n'est
+// ajoutée à `files` : le contexte se joint par `files.directory = folder_contexts.directory`,
+// ce qui évite de réécrire des milliers de lignes `files` à chaque édition de contexte.
+// Deux dimensions INDÉPENDANTES : `context` (conditions/intention de la séance) et
+// `subject` (sujet dominant). Valeurs stockées BRUTES (une valeur hors vocabulaire est
+// conservée et signalée, jamais convertie). `status` distingue une lecture réussie
+// (ok) d'un JSON invalide (invalid, à réparer) ; l'ABSENCE de fichier = absence de
+// ligne (état « non qualifié », jamais stocké). `source_mtime` rend la découverte
+// idempotente (ne relire que si le fichier a changé). Colonnes/tables additives.
+inline QStringList schemaV5Statements() {
+    return {
+        QStringLiteral(
+            "CREATE TABLE folder_contexts ("
+            "  directory     TEXT    PRIMARY KEY,"   // = files.directory
+            "  schema        INTEGER,"
+            "  context       TEXT,"                  // valeur brute (peut etre hors vocabulaire)
+            "  subject       TEXT,"                  // valeur brute (idem)
+            "  motif         TEXT,"
+            "  description   TEXT,"
+            "  created       TEXT,"
+            "  updated       TEXT,"
+            "  source_mtime  INTEGER,"               // mtime du .morfphoto.json lu (idempotence)
+            "  status        TEXT    NOT NULL,"      // ok | invalid
+            "  warnings      TEXT,"                  // future_schema, context_unknown, subject_unknown (CSV)
+            "  error         TEXT,"                  // detail de diagnostic si status = invalid
+            "  indexed_at    TEXT    NOT NULL"
+            ")"),
+        QStringLiteral("CREATE INDEX idx_ctx_context ON folder_contexts(context)"),
+        QStringLiteral("CREATE INDEX idx_ctx_subject ON folder_contexts(subject)"),
+    };
+}
+
 // Instructions à exécuter pour atteindre une version de schéma donnée. Le dépôt
 // applique dans l'ordre chaque version manquante (voir applyMigrations).
 inline QStringList migrationStatements(int version) {
@@ -171,6 +206,7 @@ inline QStringList migrationStatements(int version) {
     case 2:  return schemaV2Statements();
     case 3:  return schemaV3Statements();
     case 4:  return schemaV4Statements();
+    case 5:  return schemaV5Statements();
     default: return {};
     }
 }

@@ -9,6 +9,7 @@
 #include <QStringList>
 #include <QVector>
 #include <QSet>
+#include <QHash>
 #include <QJsonObject>
 #include <QMutex>
 
@@ -93,6 +94,13 @@ private:
                          RunCounts& counts, QSet<QString>& unavailableRoots);
     bool extract(int runId, const QString& path, RunCounts& counts, ExifData& out);
 
+    // Découverte du CONTEXTE (morfphoto-context/2) pour les répertoires scannés d'une
+    // sélection. Appelée UNIQUEMENT après un scan complet et racine disponible (jamais
+    // sur source muette ou support éjecté : on n'efface pas un contexte à tort). Lit
+    // `.morfphoto.json` par répertoire, idempotent par mtime, upsert/suppression de la
+    // ligne cache. Best-effort : un JSON absent ou invalide ne casse jamais la passe.
+    void refreshContexts(const QSet<QString>& directories, int runId, RunCounts& counts);
+
     // Émet la progression courante vers le callback (si défini). Le contexte de
     // dossier (m_p*) n'est écrit et lu que dans le thread de la passe : pas de verrou.
     void reportProgress(qint64 filesSeen) const;
@@ -107,6 +115,10 @@ private:
     bool            m_indexing = false;
     QString         m_startedAt;
     QString         m_lastError;
+
+    // mtime source connu par répertoire, chargé une fois par passe : ne relire un
+    // `.morfphoto.json` que s'il a changé (découverte de contexte idempotente).
+    QHash<QString, qint64> m_ctxMtimes;
 
     ProgressFn m_progress;
     QString    m_pPhase;

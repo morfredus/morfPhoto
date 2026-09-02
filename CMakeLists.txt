@@ -66,6 +66,7 @@ add_library(morfPhoto STATIC
     src/PhotoRepository.cpp               # depot SQLite : source de verite des metadonnees
     src/ExifExtractor.cpp                 # extraction ExifTool (QProcess -stay_open)
     src/PhotoScanner.cpp                  # parcours FS + garde-fou de perimetre
+    src/ContextFile.cpp                   # lecture/ecriture .morfphoto.json (contexte par dossier)
     src/Indexer.cpp                       # passe de reconciliation (verdict, garde passe-unique)
     src/PhotoModule.cpp                   # module metier : assemble tout le domaine
     src/SourceManager.cpp                 # sources SMB poussees (montage via helper privilegie)
@@ -75,6 +76,7 @@ add_library(morfPhoto STATIC
     include/morfphoto/PhotoRepository.h
     include/morfphoto/ExifExtractor.h
     include/morfphoto/PhotoScanner.h
+    include/morfphoto/ContextFile.h
     include/morfphoto/Indexer.h
     include/morfphoto/PhotoModule.h
     include/morfphoto/SourceManager.h

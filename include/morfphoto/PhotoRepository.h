@@ -69,6 +69,25 @@ public:
     void touchSeen(int fileId, const QString& now);
     void markMissing(const QVector<int>& fileIds, const QString& now);
 
+    // --- Contexte photographique par répertoire (morfphoto-context/2) ---
+    // Projection reconstructible des `.morfphoto.json`. Clé = le répertoire réel
+    // (files.directory). L'ABSENCE de fichier = absence de ligne (état « non qualifié »).
+    void upsertContext(const FolderContext& ctx);        // insert ou remplace la ligne du répertoire
+    void deleteContextRow(const QString& directory);     // retire la ligne (fichier disparu)
+    // mtime source connu par répertoire, pour rendre la découverte IDEMPOTENTE (ne
+    // relire un `.morfphoto.json` que s'il a changé). Chargé une fois par passe.
+    QHash<QString, qint64> knownContextMtimes();
+    // Un répertoire contient-il au moins une photo PRÉSENTE ? Garde-fou de l'écriture
+    // de contexte (ne qualifier qu'un dossier réellement indexé).
+    bool directoryHasPhotos(const QString& directory);
+    // Liste les répertoires contenant des photos présentes + leur contexte (jointure).
+    // `statusFilter` vide = tous ; sinon "qualified" | "unqualified" | "invalid".
+    // Chaque entrée : { directory, label, photo_count, date, status, context, subject,
+    // motif, description, updated, warnings }. Moteur de l'écran de qualification PhotoHub.
+    QJsonArray listContexts(const QString& statusFilter);
+    // Contexte d'UN répertoire, ou { directory, status:"unqualified" } s'il n'y en a pas.
+    QJsonObject getContext(const QString& directory);
+
     // --- Passes d'indexation ---
     int  startRun(const QString& mode, const QString& trigger, const QString& startedAt);
     void finishRun(int runId, const QString& state, const RunCounts& counts,

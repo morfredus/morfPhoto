@@ -64,6 +64,28 @@ public:
     // Export compact des photos presentes pour la couche d'analyse (morfAnalytics).
     QJsonObject photoDataset() const;
 
+    // --- Contexte photographique par répertoire (morfphoto-context/2) ---
+    // Lectures : la liste des répertoires + leur contexte (écran de qualification
+    // PhotoHub), et le contexte d'un répertoire précis. `status` : ""=tous, sinon
+    // "qualified" | "unqualified" | "invalid".
+    QJsonArray  listContexts(const QString& status) const;
+    QJsonObject getContext(const QString& directory) const;
+    // Vignette JPEG d'un fichier (apercu embarque via exiftool, JPEG comme RAW). Sert
+    // l'apercu des clients (PhotoHub). Valide que `path` est sous une racine autorisee et
+    // pointe un fichier existant. *ok=false + retour vide si indisponible.
+    QByteArray  thumbnail(const QString& path, bool* ok) const;
+    // Écriture (morfPhoto est l'UNIQUE écrivain de `.morfphoto.json`). `context` et
+    // `subject` sont OBLIGATOIRES et doivent appartenir au vocabulaire gelé. Écrit le
+    // fichier disque (atomique) puis met à jour la projection. false + *error si le
+    // répertoire est hors racine, inconnu, ou si les valeurs sont invalides. *out reçoit
+    // le contexte stocké.
+    bool putContext(const QString& directory, const QString& context, const QString& subject,
+                    const QVariant& motif, const QVariant& description,
+                    QJsonObject* out, QString* error);
+    // Retire `.morfphoto.json` du répertoire (redevient non qualifié). false + *error si
+    // hors racine ou si la suppression échoue.
+    bool deleteContext(const QString& directory, QJsonObject* out, QString* error);
+
     // --- Dossiers (thread principal) ---
     QJsonArray  listFolders() const;
     // Racines AUTORISEES (perimetre defini par la config) : PhotoHub les affiche

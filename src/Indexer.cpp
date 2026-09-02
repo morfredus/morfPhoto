@@ -8,9 +8,13 @@
 #include "morfphoto/PhotoRepository.h"
 #include "morfphoto/ExifExtractor.h"
 #include "morfphoto/PhotoScanner.h"
+#include "morfphoto/ContextFile.h"
 
 #include <QDateTime>
 #include <QSet>
+#include <QDir>
+#include <QFileInfo>
+#include <QFile>
 #include <QMutexLocker>
 
 #include <utility>
@@ -52,6 +56,10 @@ int Indexer::run(IndexMode mode, const QVector<int>& folderIds, const QString& t
 
     const int runId = m_repo->startRun(indexModeName(mode), trigger, nowIso());
     RunCounts counts;
+
+    // mtimes de contexte connus, chargés une fois : la découverte ne relit un
+    // `.morfphoto.json` que s'il a changé, et sait quelles lignes retirer.
+    m_ctxMtimes = m_repo->knownContextMtimes();
 
     QVector<FolderRow> folders = m_repo->activeFolders();
     if (!folderIds.isEmpty()) {
@@ -147,6 +155,7 @@ bool Indexer::reconcileFolder(const FolderRow& folder, IndexMode mode, int runId
 
     const KnownFiles known = m_repo->existingFilesInFolder(folder.id);
     QSet<QString> seen;
+    QSet<QString> dirs;   // répertoires distincts vus, pour la découverte de contexte
 
     // Scan interruptible : la closure re-sonde la racine périodiquement. Si la
     // source meurt en plein parcours, le scan s'arrête et signale l'incomplétude.
@@ -172,6 +181,7 @@ bool Indexer::reconcileFolder(const FolderRow& folder, IndexMode mode, int runId
             continue;
         ++counts.seen;
         seen.insert(info.path);
+        dirs.insert(info.directory);
 
         // Un gros dossier ne doit pas figer la barre : rafraîchir assez souvent
         // pour qu'un corpus déséquilibré (10 / 5000 / 20) avance au fichier.
@@ -209,6 +219,11 @@ bool Indexer::reconcileFolder(const FolderRow& folder, IndexMode mode, int runId
         return true;
     }
 
+    // Ici seulement : disque présent ET scan complet. Rafraîchir le CONTEXTE des
+    // répertoires vus est alors sûr (on ne supprimera pas un contexte parce qu'une
+    // source était momentanément muette). Vaut aussi pour un support amovible présent.
+    refreshContexts(dirs, runId, counts);
+
     // Support amovible (CD/DVD, disque d'archive) : l'absence est NORMALE. Même un
     // scan mené jusqu'au bout ne vaut jamais suppression ici — un disque éjecté (ou
     // remplacé par un autre) monté sur un point resté présent mais vide renverrait
@@ -231,6 +246,56 @@ bool Indexer::reconcileFolder(const FolderRow& folder, IndexMode mode, int runId
 
     m_repo->setFolderScanned(folder.id, nowIso());
     return false;
+}
+
+void Indexer::refreshContexts(const QSet<QString>& directories, int runId, RunCounts& counts) {
+    for (const QString& dir : directories) {
+        const QString path = QDir(dir).filePath(ContextFile::fileName());
+        const QFileInfo fi(path);
+
+        if (!fi.exists()) {
+            // `.morfphoto.json` retiré depuis la dernière fois : effacer la projection.
+            // (S'il n'a jamais existé, il n'y a pas de ligne : rien à faire.)
+            if (m_ctxMtimes.contains(dir)) {
+                m_repo->deleteContextRow(dir);
+                m_ctxMtimes.remove(dir);
+            }
+            continue;
+        }
+
+        const qint64 mtime = fi.lastModified().toSecsSinceEpoch();
+        if (m_ctxMtimes.value(dir, -1) == mtime)
+            continue;   // inchangé depuis la dernière lecture : idempotent
+
+        QFile f(path);
+        if (!f.open(QIODevice::ReadOnly)) {
+            m_repo->logError(runId, path, QStringLiteral("context"),
+                             QStringLiteral("lecture impossible: %1").arg(f.errorString()),
+                             nowIso());
+            ++counts.errors;
+            continue;
+        }
+        const QByteArray bytes = f.readAll();
+        f.close();
+
+        FolderContext fc = ContextFile::parse(bytes);
+        fc.directory   = dir;
+        fc.sourceMtime = mtime;
+        m_repo->upsertContext(fc);
+        m_ctxMtimes[dir] = mtime;
+
+        // Diagnostics : un JSON invalide ou un avertissement est journalisé sans jamais
+        // interrompre la passe (un défaut sémantique ne casse pas l'analyse technique).
+        if (fc.status == QLatin1String("invalid")) {
+            m_repo->logError(runId, path, QStringLiteral("context"),
+                             fc.error.toString(), nowIso());
+            ++counts.errors;
+        } else if (!fc.warnings.isEmpty()) {
+            m_repo->logError(runId, path, QStringLiteral("context"),
+                             QStringLiteral("avertissements: %1").arg(fc.warnings.join(QLatin1Char(','))),
+                             nowIso());
+        }
+    }
 }
 
 bool Indexer::extract(int runId, const QString& path, RunCounts& counts, ExifData& out) {

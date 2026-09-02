@@ -8,6 +8,7 @@
 #include "morfphoto/PhotoRepository.h"
 #include "morfphoto/ExifExtractor.h"
 #include "morfphoto/PhotoScanner.h"
+#include "morfphoto/ContextFile.h"
 #include "morfphoto/Paths.h"
 
 #include <QTimer>
@@ -18,6 +19,9 @@
 #include <QMutexLocker>
 #include <QHostInfo>
 #include <QFile>
+#include <QDir>
+#include <QFileInfo>
+#include <QProcess>
 #include <QUrl>
 #include <QEventLoop>
 #include <QNetworkAccessManager>
@@ -436,6 +440,132 @@ QJsonArray PhotoModule::lenses()  const { return m_readRepo ? m_readRepo->distin
 QJsonArray PhotoModule::focals()  const { return m_readRepo ? m_readRepo->distinctFocals()  : QJsonArray{}; }
 QJsonArray PhotoModule::years()   const { return m_readRepo ? m_readRepo->years()           : QJsonArray{}; }
 QJsonObject PhotoModule::photoDataset() const { return m_readRepo ? m_readRepo->photoDataset() : QJsonObject{}; }
+
+// --- Contexte photographique (morfphoto-context/2) --------------------------
+
+QJsonArray PhotoModule::listContexts(const QString& status) const {
+    return m_readRepo ? m_readRepo->listContexts(status) : QJsonArray{};
+}
+
+QJsonObject PhotoModule::getContext(const QString& directory) const {
+    if (!m_readRepo) return {};
+    return m_readRepo->getContext(directory);
+}
+
+bool PhotoModule::putContext(const QString& directory, const QString& context,
+                             const QString& subject, const QVariant& motif,
+                             const QVariant& description, QJsonObject* out, QString* error) {
+    if (!m_readRepo) { if (error) *error = QStringLiteral("base non ouverte"); return false; }
+
+    // Garde-fou de périmètre : n'écrire un `.morfphoto.json` que sous une racine autorisée.
+    if (matchingRoot(directory).isEmpty()) {
+        if (error) *error = QStringLiteral("le dossier %1 n'est sous aucune racine autorisee").arg(directory);
+        return false;
+    }
+    // Contrat V2 : context ET subject obligatoires et dans le vocabulaire gelé. La
+    // tolérance aux valeurs hors vocabulaire vaut à la LECTURE d'un fichier existant,
+    // jamais à l'ÉCRITURE que morfPhoto produit lui-même.
+    const QString ctx  = context.trimmed().toUpper();
+    const QString subj = subject.trimmed().toUpper();
+    if (!ContextFile::isKnownContext(ctx)) {
+        if (error) *error = QStringLiteral("context invalide: %1").arg(context);
+        return false;
+    }
+    if (!ContextFile::isKnownSubject(subj)) {
+        if (error) *error = QStringLiteral("subject invalide: %1").arg(subject);
+        return false;
+    }
+    // Ne qualifier qu'un répertoire réellement indexé (contient des photos présentes).
+    if (!m_readRepo->directoryHasPhotos(directory)) {
+        if (error) *error = QStringLiteral("dossier inconnu ou sans photo indexee: %1").arg(directory);
+        return false;
+    }
+
+    // Préserver `created` d'un contexte antérieur ; toujours rafraîchir `updated`.
+    const QString nowLocal = QDateTime::currentDateTime().toString(Qt::ISODate);
+    const QJsonObject existing = m_readRepo->getContext(directory);
+    const QJsonValue createdV = existing.value(QStringLiteral("created"));
+    const QString created = (createdV.isString() && !createdV.toString().isEmpty())
+        ? createdV.toString() : nowLocal;
+
+    const QByteArray bytes = ContextFile::serialize(ctx, subj, motif, description,
+                                                    created, nowLocal);
+    QString werr;
+    if (!ContextFile::write(directory, bytes, &werr)) {
+        if (error) *error = QStringLiteral("ecriture du contexte impossible: %1").arg(werr);
+        return false;
+    }
+
+    // Mettre à jour la projection tout de suite (sans attendre une passe), à partir du
+    // fichier réellement écrit (mtime constaté).
+    const QString filePath = QDir(directory).filePath(ContextFile::fileName());
+    FolderContext fc;
+    fc.directory   = directory;
+    fc.schema      = 2;
+    fc.context     = ctx;
+    fc.subject     = subj;
+    fc.motif       = motif;
+    fc.description = description;
+    fc.created     = created;
+    fc.updated     = nowLocal;
+    fc.sourceMtime = QFileInfo(filePath).lastModified().toSecsSinceEpoch();
+    fc.status      = QStringLiteral("ok");
+    m_readRepo->upsertContext(fc);
+
+    if (out) *out = m_readRepo->getContext(directory);
+    return true;
+}
+
+QByteArray PhotoModule::thumbnail(const QString& path, bool* ok) const {
+    if (ok) *ok = false;
+    // Garde-fou : ne servir que des fichiers sous une racine autorisee, existants.
+    if (!isWithinRoots(path, m_roots))
+        return {};
+    const QFileInfo fi(path);
+    if (!fi.exists() || !fi.isFile())
+        return {};
+    if (!m_exiftoolReady)
+        return {};   // sans exiftool, pas d'extraction possible
+
+    // Apercu JPEG embarque : ThumbnailImage (petit, rapide, present sur JPEG comme RAW),
+    // repli PreviewImage (plus grand, surtout sur les RAW). Process one-off borne.
+    auto extract = [this](const QString& tag, const QString& p) -> QByteArray {
+        QProcess proc;
+        proc.start(m_exiftoolBinary, {QStringLiteral("-b"), tag, p});
+        if (!proc.waitForStarted(3000))
+            return {};
+        if (!proc.waitForFinished(8000)) {
+            proc.kill();
+            proc.waitForFinished(1000);
+            return {};
+        }
+        return proc.readAllStandardOutput();
+    };
+
+    QByteArray jpeg = extract(QStringLiteral("-ThumbnailImage"), path);
+    if (jpeg.isEmpty())
+        jpeg = extract(QStringLiteral("-PreviewImage"), path);
+    if (jpeg.isEmpty())
+        return {};
+    if (ok) *ok = true;
+    return jpeg;
+}
+
+bool PhotoModule::deleteContext(const QString& directory, QJsonObject* out, QString* error) {
+    if (!m_readRepo) { if (error) *error = QStringLiteral("base non ouverte"); return false; }
+    if (matchingRoot(directory).isEmpty()) {
+        if (error) *error = QStringLiteral("le dossier %1 n'est sous aucune racine autorisee").arg(directory);
+        return false;
+    }
+    QString rerr;
+    if (!ContextFile::remove(directory, &rerr)) {
+        if (error) *error = QStringLiteral("suppression du contexte impossible: %1").arg(rerr);
+        return false;
+    }
+    m_readRepo->deleteContextRow(directory);
+    if (out) *out = m_readRepo->getContext(directory);   // status:"unqualified"
+    return true;
+}
 
 // --- Dossiers ---------------------------------------------------------------
 

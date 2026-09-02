@@ -88,4 +88,26 @@ struct RunCounts {
 
 using KnownFiles = QHash<QString, KnownFile>;   // chemin complet -> état connu
 
+// Contexte photographique d'un répertoire (contrat morfphoto-context/2), tel que
+// projeté depuis un `.morfphoto.json`. Deux dimensions INDÉPENDANTES : `context`
+// (conditions/intention de la séance) et `subject` (sujet dominant). Les valeurs sont
+// des QVariant : un QVariant vide devient NULL en base (distinguer « valeur absente »
+// de « valeur nulle »). `status` vaut "ok" ou "invalid" ; `warnings` liste les
+// signalements non bloquants (future_schema, context_unknown, subject_unknown). Une
+// valeur hors vocabulaire est CONSERVÉE telle quelle et signalée, jamais convertie.
+struct FolderContext {
+    QString     directory;              // répertoire des photos (= files.directory)
+    int         schema      = 0;
+    QVariant    context;                // QString ou null
+    QVariant    subject;                // QString ou null
+    QVariant    motif;
+    QVariant    description;
+    QVariant    created;
+    QVariant    updated;
+    qint64      sourceMtime = 0;        // mtime du .morfphoto.json lu (idempotence)
+    QString     status;                 // "ok" | "invalid"
+    QStringList warnings;               // signalements non bloquants
+    QVariant    error;                  // détail de diagnostic si status = "invalid"
+};
+
 } // namespace morfphoto

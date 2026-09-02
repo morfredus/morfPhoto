@@ -2,7 +2,7 @@
 
 *Read in another language: **English** (this document) · [Français](README.fr.md).*
 
-[![Version](https://img.shields.io/badge/version-0.10.0-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.12.0-blue)](CHANGELOG.md)
 ![C++](https://img.shields.io/badge/C%2B%2B-17-00599C?logo=cplusplus)
 ![Qt](https://img.shields.io/badge/Qt-6-41CD52?logo=qt)
 ![Build](https://img.shields.io/badge/CMake-3.21+-064F8C?logo=cmake)
@@ -58,7 +58,7 @@ layer (morfAnalytics).
 ```
 GET  /status                     rich diagnostic (morfBeacon-compatible)
 GET  /healthz                    liveness
-GET  /api/v1/photos              paginated + filtered list (year, camera, lens, type, folder, state)
+GET  /api/v1/photos              paginated + filtered list (year, camera, lens, type, folder, directory, state)
 GET  /api/v1/photos/{id}         one file
 GET  /api/v1/photos/summary      global counters
 GET  /api/v1/photos/cameras|lenses|focals|years
@@ -70,6 +70,11 @@ GET  /api/v1/folders             watched selections
 POST /api/v1/folders             declare a selection (403 outside an allowed root); optional removable, volume_label
 PATCH  /api/v1/folders/{id}      update enabled, removable, volume_label, analytics_excluded (any subset)
 DELETE /api/v1/folders/{id}      soft retire (history preserved)
+GET  /api/v1/contexts            directories + photographic context (filter ?status=qualified|unqualified|invalid)
+GET  /api/v1/context             one directory's context (?directory=...); unqualified if no valid .morfphoto.json
+PUT  /api/v1/context             write .morfphoto.json: {directory, context, subject, motif?, description?} (context+subject required)
+DELETE /api/v1/context           remove .morfphoto.json (?directory=...): the folder becomes unqualified again
+GET  /api/v1/thumbnail           image/jpeg thumbnail of a file (?path=...); embedded preview via exiftool (JPEG and RAW)
 GET  /api/v1/roots               allowed roots (config + validated SMB mounts)
 GET  /api/v1/sources             pushed SMB sources
 GET  /api/v1/sources/ready       privileged helper startable

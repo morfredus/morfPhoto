@@ -136,7 +136,7 @@ void HttpServer::handleRequest(QTcpSocket* sock, const QByteArray& method,
         IModule* mod = m_registry ? m_registry->firstOfType(QStringLiteral("photo")) : nullptr;
         PhotoApi api(qobject_cast<PhotoModule*>(mod));
         const PhotoApi::Result r = api.handle(method, QString::fromUtf8(path), queryString, body);
-        reply(sock, r.code, reasonFor(r.code), r.body);
+        reply(sock, r.code, reasonFor(r.code), r.body, r.contentType);
         return;
     }
 
@@ -222,10 +222,11 @@ QByteArray HttpServer::buildStatusJson() const {
     return toJson(o);
 }
 
-void HttpServer::reply(QTcpSocket* sock, int code, const QByteArray& reason, const QByteArray& body) {
+void HttpServer::reply(QTcpSocket* sock, int code, const QByteArray& reason, const QByteArray& body,
+                       const QByteArray& contentType) {
     QByteArray resp;
     resp += "HTTP/1.1 " + QByteArray::number(code) + " " + reason + "\r\n";
-    resp += "Content-Type: application/json; charset=utf-8\r\n";
+    resp += "Content-Type: " + contentType + "\r\n";
     resp += "Content-Length: " + QByteArray::number(body.size()) + "\r\n";
     resp += "Access-Control-Allow-Origin: *\r\n";
     resp += "Connection: close\r\n\r\n";

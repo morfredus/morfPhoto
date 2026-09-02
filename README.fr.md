@@ -2,7 +2,7 @@
 
 *Lire dans une autre langue : [English](README.md) · **Français** (ce document).*
 
-[![Version](https://img.shields.io/badge/version-0.10.0-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.12.0-blue)](CHANGELOG.md)
 ![C++](https://img.shields.io/badge/C%2B%2B-17-00599C?logo=cplusplus)
 ![Qt](https://img.shields.io/badge/Qt-6-41CD52?logo=qt)
 ![Build](https://img.shields.io/badge/CMake-3.21+-064F8C?logo=cmake)
@@ -61,7 +61,7 @@ déduplication et interprétation vivent dans une couche distincte (morfAnalytic
 ```
 GET  /status                     diagnostic riche (compatible morfBeacon)
 GET  /healthz                    vivant ?
-GET  /api/v1/photos              liste paginée + filtrée (year, camera, lens, type, folder, state)
+GET  /api/v1/photos              liste paginée + filtrée (year, camera, lens, type, folder, directory, state)
 GET  /api/v1/photos/{id}         une fiche
 GET  /api/v1/photos/summary      compteurs globaux
 GET  /api/v1/photos/cameras|lenses|focals|years
@@ -73,6 +73,11 @@ GET  /api/v1/folders             sélections surveillées
 POST /api/v1/folders             déclare une sélection (403 hors d'une racine autorisée) ; champs optionnels removable, volume_label
 PATCH  /api/v1/folders/{id}      modifie enabled, removable, volume_label, analytics_excluded (sous-ensemble libre)
 DELETE /api/v1/folders/{id}      retrait doux (historique conservé)
+GET  /api/v1/contexts            répertoires + contexte photographique (filtre ?status=qualified|unqualified|invalid)
+GET  /api/v1/context             contexte d'un répertoire (?directory=...) ; unqualified si aucun .morfphoto.json valide
+PUT  /api/v1/context             écrit .morfphoto.json : {directory, context, subject, motif?, description?} (context+subject obligatoires)
+DELETE /api/v1/context           retire .morfphoto.json (?directory=...) : le dossier redevient non qualifié
+GET  /api/v1/thumbnail           vignette image/jpeg d'un fichier (?path=...) ; aperçu embarqué via exiftool (JPEG comme RAW)
 GET  /api/v1/roots               racines autorisées (config + montages SMB validés)
 GET  /api/v1/sources             sources SMB poussées
 GET  /api/v1/sources/ready       helper privilégié démarrable

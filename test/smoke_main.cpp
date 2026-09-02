@@ -18,12 +18,14 @@
 #include <QFile>
 #include <QDateTime>
 #include <QJsonObject>
+#include <QJsonArray>
 #include <QVariantMap>
 
 #include "morfphoto/PhotoScanner.h"
 #include "morfphoto/PhotoRepository.h"
 #include "morfphoto/ExifExtractor.h"
 #include "morfphoto/Indexer.h"
+#include "morfphoto/ContextFile.h"
 #include "morfphoto/SmbSourceNaming.h"
 
 using namespace morfphoto;
@@ -335,6 +337,142 @@ int main(int argc, char** argv) {
     CHECK(repo2.summary().value(QStringLiteral("files_total")).toInt() == 0 &&
           repo2.listFoldersDetail().isEmpty(),
           "purge totale -> base videe (fichiers + selections)");
+
+    // --- 8) CONTEXTE photographique par dossier (contrat morfphoto-context/2) ---
+    //   Parseur tolerant + les 4 cas de reference + decouverte bout-en-bout + jointure
+    //   dataset (null vs INCONNU distincts) + idempotence par mtime.
+    {
+        auto parseCtx = [](const char* json) { return ContextFile::parse(QByteArray(json)); };
+
+        // 8a) Les quatre cas de reference qui valident le modele a deux dimensions.
+        const FolderContext zoo = parseCtx(
+            "{\"schema\":2,\"context\":\"LIBRE\",\"subject\":\"ANIMAUX\",\"motif\":\"Zoo\"}");
+        CHECK(zoo.status == QLatin1String("ok")
+              && zoo.context.toString() == QLatin1String("LIBRE")
+              && zoo.subject.toString() == QLatin1String("ANIMAUX"),
+              "contexte: zoo -> LIBRE + ANIMAUX (jamais SPECIALISEE)");
+
+        const FolderContext cig = parseCtx(
+            "{\"schema\":2,\"context\":\"SPECIALISEE\",\"subject\":\"ANIMAUX\",\"motif\":\"Cigognes\"}");
+        CHECK(cig.status == QLatin1String("ok")
+              && cig.context.toString() == QLatin1String("SPECIALISEE")
+              && cig.subject.toString() == QLatin1String("ANIMAUX"),
+              "contexte: cigognes -> SPECIALISEE + ANIMAUX (distinct du zoo)");
+
+        const FolderContext mar = parseCtx(
+            "{\"schema\":2,\"context\":\"EVENEMENT\",\"subject\":\"PERSONNES\","
+            "\"motif\":\"Demande en mariage\"}");
+        CHECK(mar.status == QLatin1String("ok")
+              && mar.context.toString() == QLatin1String("EVENEMENT")
+              && mar.subject.toString() == QLatin1String("PERSONNES"),
+              "contexte: demande en mariage -> EVENEMENT + PERSONNES");
+
+        const FolderContext bal = parseCtx(
+            "{\"schema\":2,\"context\":\"DECOUVERTE\",\"subject\":\"GENERAL\"}");
+        CHECK(bal.status == QLatin1String("ok")
+              && bal.context.toString() == QLatin1String("DECOUVERTE")
+              && bal.subject.toString() == QLatin1String("GENERAL"),
+              "contexte: balade -> DECOUVERTE + GENERAL");
+
+        // INCONNU est une VALEUR valide (qualifie mais non tranche), jamais un defaut.
+        const FolderContext inc = parseCtx(
+            "{\"schema\":2,\"context\":\"INCONNU\",\"subject\":\"GENERAL\"}");
+        CHECK(inc.status == QLatin1String("ok")
+              && inc.context.toString() == QLatin1String("INCONNU"),
+              "contexte: INCONNU est une valeur qualifiee (distinct de non qualifie)");
+
+        // Invalides : jamais bloquant, toujours diagnostiquable.
+        CHECK(parseCtx("{ pas du json").status == QLatin1String("invalid"),
+              "contexte: json casse -> invalid");
+        CHECK(parseCtx("{\"context\":\"LIBRE\",\"subject\":\"GENERAL\"}").status
+                  == QLatin1String("invalid"),
+              "contexte: schema absent -> invalid");
+        CHECK(parseCtx("{\"schema\":2,\"context\":\"LIBRE\"}").status == QLatin1String("invalid"),
+              "contexte: subject manquant en schema 2 -> invalid");
+
+        // Valeur hors vocabulaire : conservee + signalee, jamais convertie.
+        const FolderContext unk = parseCtx(
+            "{\"schema\":2,\"context\":\"FETE\",\"subject\":\"GENERAL\"}");
+        CHECK(unk.status == QLatin1String("ok")
+              && unk.context.toString() == QLatin1String("FETE")
+              && unk.warnings.contains(QStringLiteral("context_unknown")),
+              "contexte: valeur hors vocabulaire conservee + signalee");
+
+        // Casse et espaces normalises en majuscule.
+        const FolderContext low = parseCtx(
+            "{\"schema\":2,\"context\":\" decouverte \",\"subject\":\"paysage\"}");
+        CHECK(low.context.toString() == QLatin1String("DECOUVERTE")
+              && low.subject.toString() == QLatin1String("PAYSAGE"),
+              "contexte: trim + majuscule a la lecture");
+
+        // 8b) Decouverte bout-en-bout : deux dossiers, un qualifie, un non.
+        const QString cbase = base + QStringLiteral("/ctx");
+        const QString evDir  = cbase + QStringLiteral("/2026-09-01-demande");
+        const QString zooDir = cbase + QStringLiteral("/2026-09-05-zoo");
+        QDir().mkpath(evDir);
+        QDir().mkpath(zooDir);
+        writeBytes(evDir + QStringLiteral("/e1.jpg"), 100);
+        writeBytes(zooDir + QStringLiteral("/z1.jpg"), 100);
+        {
+            QFile f(evDir + QStringLiteral("/.morfphoto.json"));
+            if (f.open(QIODevice::WriteOnly)) {
+                f.write("{\"schema\":2,\"context\":\"EVENEMENT\",\"subject\":\"PERSONNES\"}");
+                f.close();
+            }
+        }
+        // Le dossier zoo reste sans `.morfphoto.json` : non qualifie.
+
+        PhotoRepository crepo(QStringLiteral("smoke:ctx"));
+        CHECK(crepo.open(cbase + QStringLiteral("/db.sqlite")),
+              "contexte: base ouverte (migrations jusqu'a v5)");
+        (void)crepo.addFolder(cbase, cbase, QVariant(), true, false, QVariant(), nowIso());
+        Indexer cidx(&crepo, nullptr, {cbase});
+        cidx.run(IndexMode::Full, {}, QStringLiteral("cli"));
+
+        CHECK(crepo.getContext(evDir).value(QStringLiteral("status")).toString()
+                  == QLatin1String("qualified"),
+              "contexte: dossier avec json -> qualified");
+        CHECK(crepo.getContext(evDir).value(QStringLiteral("context")).toString()
+                  == QLatin1String("EVENEMENT"),
+              "contexte: valeur lue depuis le disque");
+        CHECK(crepo.getContext(zooDir).value(QStringLiteral("status")).toString()
+                  == QLatin1String("unqualified"),
+              "contexte: dossier sans json -> unqualified (indexation jamais bloquee)");
+
+        // Dataset : colonne context alignee ; 1 EVENEMENT interne, 1 null (distinct d'INCONNU).
+        const QJsonObject cds  = crepo.photoDataset();
+        const QJsonObject cc   = cds.value(QStringLiteral("columns")).toObject();
+        const QJsonArray ctxCol = cc.value(QStringLiteral("context")).toArray();
+        CHECK(ctxCol.size() == 2, "contexte: colonne context alignee sur les 2 photos");
+        int nNull = 0, nSet = 0;
+        for (const QJsonValue& v : ctxCol) { if (v.isNull()) ++nNull; else ++nSet; }
+        const QJsonArray ctxDict = cds.value(QStringLiteral("dictionaries")).toObject()
+                                      .value(QStringLiteral("context")).toArray();
+        CHECK(nNull == 1 && nSet == 1
+              && ctxDict.contains(QJsonValue(QStringLiteral("EVENEMENT"))),
+              "contexte: dataset -> 1 qualifiee (EVENEMENT), 1 null (non qualifiee)");
+
+        // listContexts : 2 dossiers ; filtre unqualified -> le zoo.
+        CHECK(crepo.listContexts(QString()).size() == 2,
+              "contexte: listContexts -> 2 dossiers de photos");
+        const QJsonArray unq = crepo.listContexts(QStringLiteral("unqualified"));
+        CHECK(unq.size() == 1
+              && unq.at(0).toObject().value(QStringLiteral("label")).toString()
+                  == QLatin1String("2026-09-05-zoo"),
+              "contexte: filtre unqualified -> le zoo");
+
+        // Idempotence par mtime, puis retrait du json -> le dossier redevient non qualifie.
+        cidx.run(IndexMode::Incremental, {}, QStringLiteral("cli"));
+        CHECK(crepo.getContext(evDir).value(QStringLiteral("status")).toString()
+                  == QLatin1String("qualified"),
+              "contexte: 2e passe idempotente, contexte conserve");
+        QFile::remove(evDir + QStringLiteral("/.morfphoto.json"));
+        cidx.run(IndexMode::Incremental, {}, QStringLiteral("cli"));
+        CHECK(crepo.getContext(evDir).value(QStringLiteral("status")).toString()
+                  == QLatin1String("unqualified"),
+              "contexte: json retire -> dossier redevient non qualifie");
+        crepo.close();
+    }
 
     repo2.close();
     QDir(base).removeRecursively();

@@ -3,6 +3,54 @@
 Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/)
 et du [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [0.12.0] - 2026-09-02
+
+### Added
+
+- **Thumbnail endpoint** `GET /api/v1/thumbnail?path=<file>`: returns an `image/jpeg`
+  preview (embedded thumbnail extracted by exiftool, JPEG as well as RAW), so pure
+  clients (PhotoHub) can show a folder preview without ever reading the photo files.
+  The path is validated as within an allowed root and pointing at an existing file;
+  anything else returns 404.
+- `GET /api/v1/photos` gains a `directory` filter (fully decoded), to fetch a sample
+  of a folder's files for that preview.
+- The API layer can now return non-JSON responses: `PhotoApi::Result` carries a
+  `contentType` and the HTTP server honours it (JSON stays the default).
+
+## [0.11.1] - 2026-09-02
+
+### Fixed
+
+- `GET /api/v1/context` and `DELETE /api/v1/context` now decode the `directory`
+  query parameter fully: a directory path carries `/` characters that `QUrlQuery`
+  keeps percent-encoded (`%2F`) by default, so the lookup missed and always returned
+  `unqualified`. Reading the parameter as `QUrl::FullyDecoded` fixes both endpoints.
+
+## [0.11.0] - 2026-09-02
+
+### Added
+
+- **Photographic context per folder** (contract `morfphoto-context/2`). Each photo
+  directory may carry a `.morfphoto.json` file describing two independent dimensions:
+  `context` (conditions/intent of the session: `LIBRE`, `DECOUVERTE`, `EVENEMENT`,
+  `SPECTACLE`, `MISSION`, `SPECIALISEE`, `INCONNU`) and `subject` (dominant subject:
+  `GENERAL`, `PERSONNES`, `ANIMAUX`, `PAYSAGE`, `ARCHITECTURE`, `DETAIL`). The file on
+  disk is the source of truth; morfPhoto is its sole writer.
+- Schema migration **v5**: new `folder_contexts` table, a reconstructible projection of
+  the on-disk files keyed by directory (`files.directory`). No column added to `files`;
+  the context is joined at read time.
+- Context discovery during an indexing pass: after a complete scan on an available root,
+  each seen directory's `.morfphoto.json` is read (idempotent by mtime) and projected.
+  A missing or invalid file never blocks indexing or EXIF extraction; issues are logged
+  under stage `context`.
+- API (additive): `GET /api/v1/contexts[?status=qualified|unqualified|invalid]`,
+  `GET /api/v1/context?directory=…`, `PUT /api/v1/context` (writes `.morfphoto.json`
+  atomically; `context` and `subject` mandatory and validated), `DELETE /api/v1/context`.
+  `GET /api/v1/photos/dataset` gains `context`/`subject` columns and dictionaries;
+  `GET /api/v1/photos/summary` gains a `contexts` coverage block.
+- The three states stay distinct everywhere: absent file → `unqualified`, `context=INCONNU`
+  → qualified but deliberately undecided, broken file → `invalid`.
+
 ## [0.10.0] - 2026-08-24
 
 ### Ajouté
