@@ -25,6 +25,19 @@
       }
     },
     {
+      "name": "linux-arm64-cross",
+      "displayName": "morfPhoto (Linux ARM64 croise, depuis x86_64 : WSL/Linux + sysroot Trixie)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-arm64-cross",
+      "toolchainFile": "${sourceDir}/third_party/morf/morfdeploy/cmake/linux-aarch64.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      },
+      "environment": {
+        "QEMU_LD_PREFIX": "$penv{MORF_SYSROOT}"
+      }
+    },
+    {
       "name": "mingw",
       "displayName": "morfPhoto (Windows, MinGW)",
       "generator": "Ninja",
@@ -45,6 +58,13 @@
     {
       "name": "linux-arm64",
       "configurePreset": "linux-arm64"
+    },
+    {
+      "name": "linux-arm64-cross",
+      "configurePreset": "linux-arm64-cross",
+      "environment": {
+        "QEMU_LD_PREFIX": "$penv{MORF_SYSROOT}"
+      }
     },
     {
       "name": "mingw",
