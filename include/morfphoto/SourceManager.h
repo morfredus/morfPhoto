@@ -35,10 +35,12 @@ public:
     void load();
 
     // Monte (ou revalide) une source. hostname = identite canonique (obligatoire,
-    // pas une IP). host = cible CIFS (IP ou nom resolvable). *out recoit le
-    // rapport du helper (mountpoint, steps, restart_needed, ...).
+    // pas une IP). host = cible CIFS (IP ou nom resolvable). `writable` : source
+    // qualifiable, montee en lecture/ecriture pour que morfPhoto y ecrive le sidecar
+    // `.morfphoto.json` (jamais les photos) ; false = archive en lecture seule.
+    // *out recoit le rapport du helper (mountpoint, steps, restart_needed, ...).
     bool addSource(const QString& host, const QString& share, const QString& username,
-                   const QString& password, const QString& hostname,
+                   const QString& password, const QString& hostname, bool writable,
                    QJsonObject* out, QString* error);
 
     QJsonArray  listSources() const;

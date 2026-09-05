@@ -146,11 +146,11 @@ void SourceManager::scheduleServiceRestart() const {
 }
 
 bool SourceManager::addSource(const QString& host, const QString& share, const QString& username,
-                              const QString& password, const QString& hostname,
+                              const QString& password, const QString& hostname, bool writable,
                               QJsonObject* out, QString* error) {
 #ifndef Q_OS_UNIX
     Q_UNUSED(host); Q_UNUSED(share); Q_UNUSED(username);
-    Q_UNUSED(password); Q_UNUSED(hostname); Q_UNUSED(out);
+    Q_UNUSED(password); Q_UNUSED(hostname); Q_UNUSED(writable); Q_UNUSED(out);
     if (error) *error = QStringLiteral("les sources SMB poussees ne sont montables que sur un hote Linux");
     return false;
 #else
@@ -180,7 +180,10 @@ bool SourceManager::addSource(const QString& host, const QString& share, const Q
     }
 
     QProcess helper;
-    helper.start(m_helperPath, {QStringLiteral("mount"), host, share, slug});
+    // 6e argument : mode de montage. rw = source qualifiable (morfPhoto y ecrit le
+    // sidecar), ro = archive en lecture seule.
+    const QString mode = writable ? QStringLiteral("rw") : QStringLiteral("ro");
+    helper.start(m_helperPath, {QStringLiteral("mount"), host, share, slug, mode});
     if (!helper.waitForStarted(10000)) {
         if (error) *error = QStringLiteral("helper privilegie introuvable ou non demarrable (%1)")
                                 .arg(m_helperPath);
@@ -223,6 +226,7 @@ bool SourceManager::addSource(const QString& host, const QString& share, const Q
     entry[QStringLiteral("share")]       = share;
     entry[QStringLiteral("mountpoint")]  = mountpoint;
     entry[QStringLiteral("credentials")] = credentialsPathForSlug(slug);
+    entry[QStringLiteral("writable")]    = writable;   // source qualifiable (rw) ou archive (ro)
     entry[QStringLiteral("added_at")]    = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
 
     QJsonArray updated;

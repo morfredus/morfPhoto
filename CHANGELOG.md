@@ -3,6 +3,28 @@
 Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/)
 et du [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [0.13.0] - 2026-09-05
+
+### Added
+
+- **Per-source read/write mounts, so context qualification can actually write.**
+  Pushed SMB sources were always mounted read-only, which made writing the
+  `.morfphoto.json` sidecar beside the photos impossible - the qualification screen
+  failed with "Système de fichiers accessible en lecture seulement" even though
+  morfPhoto only ever writes that one sidecar, never the photos. A source can now be
+  declared **qualifiable** (`writable`), mounted read/write; archives stay read-only.
+  - `POST /api/v1/sources` accepts a `writable` flag (default false, backward
+    compatible), threaded through PhotoModule and SourceManager to the privileged
+    helper. The stored source metadata records `writable`.
+  - The privileged helper's `mount` verb takes an optional 6th argument `rw|ro`
+    (default `ro`), writes the matching fstab option, and **remounts when the current
+    mode no longer matches** - so re-pushing a source to make it qualifiable actually
+    flips an existing read-only mount to read/write instead of silently keeping it ro.
+  - When `rw` is requested the helper performs a real **write probe** (create then
+    delete a temp file) after mounting: if the Windows share denies writes for the
+    account, it fails immediately with a clear message instead of letting the failure
+    surface later when saving a context.
+
 ## [0.12.1] - 2026-09-03
 
 ### Changed

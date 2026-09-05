@@ -590,11 +590,11 @@ QString PhotoModule::matchingRoot(const QString& path) const {
 // --- Sources SMB poussées ---------------------------------------------------
 
 bool PhotoModule::addSource(const QString& host, const QString& share, const QString& username,
-                            const QString& password, const QString& hostname,
+                            const QString& password, const QString& hostname, bool writable,
                             QJsonObject* out, QString* error) {
     QJsonObject src;
     QString err;
-    if (!m_sourceManager.addSource(host, share, username, password, hostname, &src, &err)) {
+    if (!m_sourceManager.addSource(host, share, username, password, hostname, writable, &src, &err)) {
         if (error) *error = err;
         if (out) *out = src;
         return false;

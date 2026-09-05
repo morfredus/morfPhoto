@@ -97,7 +97,7 @@ public:
     // le CIFS, persiste fstab + racine, puis (si le JSON a change) programme un
     // redemarrage. false + *error si une etape obligatoire echoue.
     bool        addSource(const QString& host, const QString& share, const QString& username,
-                          const QString& password, const QString& hostname,
+                          const QString& password, const QString& hostname, bool writable,
                           QJsonObject* out, QString* error);
     // Sources connues, chacune annotee `mounted`.
     QJsonArray  listSources() const;

@@ -257,9 +257,13 @@ PhotoApi::Result PhotoApi::handle(const QByteArray& method, const QString& path,
             if (hostname.isEmpty())
                 return error(400, QStringLiteral("bad_request"),
                              QStringLiteral("`hostname` de la machine source est obligatoire"));
+            // `writable` : source qualifiable, montee en lecture/ecriture pour que
+            // morfPhoto y ecrive `.morfphoto.json`. Absent = false (lecture seule),
+            // retro-compatible avec un client plus ancien.
+            const bool writable = in.value(QStringLiteral("writable")).toBool(false);
             QJsonObject out;
             QString err;
-            if (!m_module->addSource(host, share, username, password, hostname, &out, &err)) {
+            if (!m_module->addSource(host, share, username, password, hostname, writable, &out, &err)) {
                 if (!out.contains(QStringLiteral("error")))
                     out[QStringLiteral("error")] = out.value(QStringLiteral("code")).toString(
                         QStringLiteral("mount_failed"));

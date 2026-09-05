@@ -5,14 +5,17 @@
  *
  * Le service morfPhoto tourne sans privilege. Monter un partage SMB en cifs
  * exige root. Ce binaire setuid EST la seule porte privilegiee : une source
- * (hostname slug) = un montage lecture seule sous /mnt/photos_<slug>, un
+ * (hostname slug) = un montage sous /mnt/photos_<slug> (lecture seule par
+ * defaut, ou lecture/ecriture si la source est declaree qualifiable), un
  * fichier /etc/morfsystem/smb-photos-<slug>.cred, une ligne fstab, et
  * l'ajout idempotent de cette racine dans morfphoto.json. Rien d'autre.
  *
  * Invariants DURS :
  *   - execution root obligatoire, Linux uniquement ;
  *   - point de montage cree : uniquement /mnt/photos_<slug> ;
- *   - montage cifs LECTURE SEULE, options figees (sans nofail au test) ;
+ *   - montage cifs ro par defaut ; rw seulement si demande (source qualifiable),
+ *     et morfPhoto n'y ecrit alors QUE le sidecar `.morfphoto.json`, jamais les
+ *     photos ; options figees (sans nofail au test) ;
  *   - mot de passe sur stdin, jamais en argv ;
  *   - un fichier d'identifiants par slug (jamais d'ecrasement croise) ;
  *   - fstab et morfphoto.json d'une source ne touchent jamais une autre ;
@@ -20,7 +23,8 @@
  *
  * Verbes :
  *   probe
- *   mount   <host> <share> <slug>   (identifiants : 2 lignes sur stdin)
+ *   mount   <host> <share> <slug> [rw|ro]   (identifiants : 2 lignes sur stdin ;
+ *                                            mode optionnel, defaut ro)
  *   unmount <mountpoint>
  *   restart-service
  */
@@ -224,6 +228,12 @@ struct MountInfo {
     bool    present = false;
     QString fstype;
     QString source;
+    QString options;   // colonne 4 de /proc/mounts (ex. "rw,relatime,...")
+
+    // Un montage cifs liste toujours "ro" ou "rw" en tete de ses options.
+    bool writable() const {
+        return options.split(QLatin1Char(',')).contains(QStringLiteral("rw"));
+    }
 };
 
 MountInfo readMount(const QString& mountpoint) {
@@ -243,6 +253,8 @@ MountInfo readMount(const QString& mountpoint) {
         info.present = true;
         info.source  = QString::fromUtf8(cols.at(0));
         info.fstype  = QString::fromUtf8(cols.at(2));
+        if (cols.size() >= 4)
+            info.options = QString::fromUtf8(cols.at(3));
         return info;
     }
     return info;
@@ -277,19 +289,22 @@ bool writeCredentials(const QString& path, const QByteArray& body) {
 }
 
 QString fstabLine(const QString& host, const QString& share,
-                  const QString& mountpoint, const QString& cred) {
+                  const QString& mountpoint, const QString& cred, bool writable) {
     // nofail + automount : uniquement pour la persistance, APRES un montage
     // manuel deja valide. uid/gid = utilisateur reel (compte du service).
+    // Mode rw uniquement pour une source qualifiable : morfPhoto n'y ecrit QUE le
+    // sidecar `.morfphoto.json`, jamais les photos. Les archives restent en ro.
+    const QString mode = writable ? QStringLiteral("rw") : QStringLiteral("ro");
     return QStringLiteral(
-        "//%1/%2 %3 cifs credentials=%4,ro,uid=%5,gid=%6,iocharset=utf8,vers=3.0,"
+        "//%1/%2 %3 cifs credentials=%4,%5,uid=%6,gid=%7,iocharset=utf8,vers=3.0,"
         "nofail,x-systemd.automount 0 0")
-        .arg(host, share, mountpoint, cred)
+        .arg(host, share, mountpoint, cred, mode)
         .arg(g_fileUid).arg(g_fileGid);
 }
 
 bool ensureFstab(const QString& host, const QString& share,
-                 const QString& mountpoint, const QString& cred, bool* changed) {
-    const QString line = fstabLine(host, share, mountpoint, cred);
+                 const QString& mountpoint, const QString& cred, bool writable, bool* changed) {
+    const QString line = fstabLine(host, share, mountpoint, cred, writable);
     const QByteArray needle = QStringLiteral(" %1 ").arg(mountpoint).toUtf8();
 
     QFile f(QString::fromLatin1(kFstab));
@@ -446,7 +461,7 @@ bool addRootToConfig(const QString& mountpoint, bool* changed, QString* error) {
     return true;
 }
 
-int doMount(const QString& host, const QString& share, const QString& slug) {
+int doMount(const QString& host, const QString& share, const QString& slug, bool writable) {
     Report r;
     r.slug        = slug;
     r.mountpoint  = morfphoto::mountpointForSlug(slug);
@@ -499,15 +514,21 @@ int doMount(const QString& host, const QString& share, const QString& slug) {
         && (before.source.compare(unc, Qt::CaseInsensitive) == 0
             || before.source.contains(share, Qt::CaseInsensitive));
 
+    // Un montage deja en place mais dans le MAUVAIS mode (ro alors qu'on veut rw, ou
+    // l'inverse) doit etre remonte : sinon re-pousser une source pour la rendre
+    // qualifiable ne changerait rien tant que le point reste monte en lecture seule.
+    const bool modeMatches = before.present && (before.writable() == writable);
+
     bool remounted = false;
-    if (!(sameSource && credsUnchanged && dirIsReadable(r.mountpoint))) {
+    if (!(sameSource && credsUnchanged && dirIsReadable(r.mountpoint) && modeMatches)) {
         if (before.present)
             run(QStringLiteral("umount"), {r.mountpoint}, 15000);
 
         // Test reel : PAS de nofail, sinon mount peut "reussir" sur un dossier vide.
+        const QString mode = writable ? QStringLiteral("rw") : QStringLiteral("ro");
         const QString options = QStringLiteral(
-            "ro,uid=%1,gid=%2,credentials=%3,iocharset=utf8,vers=3.0")
-            .arg(g_fileUid).arg(g_fileGid).arg(r.credentials);
+            "%4,uid=%1,gid=%2,credentials=%3,iocharset=utf8,vers=3.0")
+            .arg(g_fileUid).arg(g_fileGid).arg(r.credentials).arg(mode);
         const CmdResult mounted = run(QStringLiteral("mount"), {
             QStringLiteral("-t"), QStringLiteral("cifs"), unc, r.mountpoint,
             QStringLiteral("-o"), options});
@@ -560,8 +581,35 @@ int doMount(const QString& host, const QString& share, const QString& slug) {
     }
     addStep(r, QStringLiteral("share_readable"), true);
 
+    // Source qualifiable : l'ecriture doit VRAIMENT passer (au-dela du mode rw du
+    // montage, le partage Windows peut refuser l'ecriture a ce compte). On cree puis
+    // efface un fichier temoin : echouer ici donne un message clair tout de suite,
+    // plutot qu'un echec d'enregistrement de contexte plus tard cote PhotoHub.
+    if (writable) {
+        const QString probe = QDir(r.mountpoint).filePath(QStringLiteral(".morfphoto-write-test"));
+        QFile wf(probe);
+        bool wok = wf.open(QIODevice::WriteOnly | QIODevice::Truncate);
+        if (wok) {
+            wok = wf.write("ok") == 2;
+            wf.close();
+            QFile::remove(probe);
+        }
+        if (!wok) {
+            addStep(r, QStringLiteral("share_writable"), false, r.mountpoint);
+            if (remounted)
+                run(QStringLiteral("umount"), {r.mountpoint}, 15000);
+            return fail(r, QStringLiteral("share_not_writable"),
+                        QStringLiteral(
+                            "Le partage est monte mais l'ecriture est refusee. La qualification "
+                            "exige d'ecrire le fichier .morfphoto.json a cote des photos : "
+                            "autorisez l'ecriture pour ce compte cote partage Windows, ou "
+                            "declarez cette source en lecture seule (non qualifiable)."));
+        }
+        addStep(r, QStringLiteral("share_writable"), true);
+    }
+
     bool fstabChanged = false;
-    if (!ensureFstab(host, share, r.mountpoint, r.credentials, &fstabChanged)) {
+    if (!ensureFstab(host, share, r.mountpoint, r.credentials, writable, &fstabChanged)) {
         addStep(r, QStringLiteral("fstab_configured"), false,
                 QString::fromLatin1(kFstab));
         return fail(r, QStringLiteral("fstab_failed"),
@@ -677,7 +725,7 @@ int main(int argc, char** argv) {
     static const QRegularExpression kHost(QStringLiteral("^[A-Za-z0-9._-]+$"));
     static const QRegularExpression kShare(QStringLiteral("^[A-Za-z0-9._$-]+$"));
 
-    if (args.size() == 5 && args.at(1) == QStringLiteral("mount")) {
+    if ((args.size() == 5 || args.size() == 6) && args.at(1) == QStringLiteral("mount")) {
         const QString host  = args.at(2);
         const QString share = args.at(3);
         const QString slug  = args.at(4);
@@ -687,7 +735,19 @@ int main(int argc, char** argv) {
             return refuse(QStringLiteral("partage invalide"));
         if (!morfphoto::isValidSourceSlug(slug))
             return refuse(QStringLiteral("identifiant de machine invalide"));
-        return doMount(host, share, slug);
+        // 6e argument optionnel : mode "rw" (source qualifiable) ou "ro" (defaut,
+        // retro-compatible avec un module plus ancien qui n'envoie que 5 arguments).
+        bool writable = false;
+        if (args.size() == 6) {
+            const QString mode = args.at(5);
+            if (mode == QLatin1String("rw"))
+                writable = true;
+            else if (mode == QLatin1String("ro"))
+                writable = false;
+            else
+                return refuse(QStringLiteral("mode de montage invalide (rw|ro)"));
+        }
+        return doMount(host, share, slug, writable);
     }
 
     if (args.size() == 3 && args.at(1) == QStringLiteral("unmount")) {
@@ -711,6 +771,7 @@ int main(int argc, char** argv) {
         return doRestart();
 
     return refuse(QStringLiteral(
-        "usage : probe | mount <host> <share> <slug> | unmount <mountpoint> | restart-service"));
+        "usage : probe | mount <host> <share> <slug> [rw|ro] | unmount <mountpoint> "
+        "| restart-service"));
 #endif
 }
