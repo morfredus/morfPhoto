@@ -3,6 +3,28 @@
 Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/)
 et du [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [0.13.1] - 2026-09-06
+
+### Fixed
+
+- **A sleeping source no longer freezes morfPhoto's HTTP workers.** When a network
+  source (SMB/CIFS) goes dead - the source PC asleep - any access to its mount blocks
+  until the CIFS timeout (~180 s). Three endpoints touched the mount directly and could
+  hang: `PUT`/`DELETE /api/v1/context` (writing/removing the `.morfphoto.json` sidecar)
+  and `GET /api/v1/thumbnail` (preview). Each now runs a bounded accessibility probe
+  (`probeAccessible`, `watch.availability_timeout_ms`, default 5 s) before touching the
+  path - `thumbnail` probes before `isWithinRoots`, whose `canonicalFilePath()` would
+  itself block. An unreachable source now returns a clear error fast instead of hanging.
+  (`/status` and `/healthz` were already safe: they only read the database and
+  `/proc/mounts`.)
+
+### Changed
+
+- **Mounts now fail fast on a dead share.** The privileged helper mounts CIFS with
+  `soft,echo_interval=10`, so I/O on a source whose machine fell asleep errors in
+  ~20 s instead of blocking ~180 s (the default CIFS timeout). Applies to both the test
+  mount and the persisted `fstab` line; re-push a source to migrate its options.
+
 ## [0.13.0] - 2026-09-05
 
 ### Added

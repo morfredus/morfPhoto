@@ -294,10 +294,14 @@ QString fstabLine(const QString& host, const QString& share,
     // manuel deja valide. uid/gid = utilisateur reel (compte du service).
     // Mode rw uniquement pour une source qualifiable : morfPhoto n'y ecrit QUE le
     // sidecar `.morfphoto.json`, jamais les photos. Les archives restent en ro.
+    // soft + echo_interval court : si la machine source s'endort, les E/S echouent
+    // vite (~2 x echo_interval) au lieu de bloquer jusqu'au timeout CIFS par defaut
+    // (~180 s). Sans ca, un simple stat sur le montage fige tout appelant (c'est ce
+    // qui faisait paraitre morfMonitor « defaillant » la nuit). hard bloquerait ~180 s.
     const QString mode = writable ? QStringLiteral("rw") : QStringLiteral("ro");
     return QStringLiteral(
         "//%1/%2 %3 cifs credentials=%4,%5,uid=%6,gid=%7,iocharset=utf8,vers=3.0,"
-        "nofail,x-systemd.automount 0 0")
+        "soft,echo_interval=10,nofail,x-systemd.automount 0 0")
         .arg(host, share, mountpoint, cred, mode)
         .arg(g_fileUid).arg(g_fileGid);
 }
@@ -526,8 +530,9 @@ int doMount(const QString& host, const QString& share, const QString& slug, bool
 
         // Test reel : PAS de nofail, sinon mount peut "reussir" sur un dossier vide.
         const QString mode = writable ? QStringLiteral("rw") : QStringLiteral("ro");
+        // soft + echo_interval court : echec rapide si la source s'endort (voir fstabLine).
         const QString options = QStringLiteral(
-            "%4,uid=%1,gid=%2,credentials=%3,iocharset=utf8,vers=3.0")
+            "%4,uid=%1,gid=%2,credentials=%3,iocharset=utf8,vers=3.0,soft,echo_interval=10")
             .arg(g_fileUid).arg(g_fileGid).arg(r.credentials).arg(mode);
         const CmdResult mounted = run(QStringLiteral("mount"), {
             QStringLiteral("-t"), QStringLiteral("cifs"), unc, r.mountpoint,

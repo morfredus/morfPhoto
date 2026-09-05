@@ -480,6 +480,14 @@ bool PhotoModule::putContext(const QString& directory, const QString& context,
         if (error) *error = QStringLiteral("dossier inconnu ou sans photo indexee: %1").arg(directory);
         return false;
     }
+    // La source peut dormir (PC éteint la nuit) : son montage réseau figé ferait bloquer
+    // l'écriture ~180 s (timeout CIFS) et gèlerait ce worker HTTP. Sonde bornée d'abord :
+    // une source injoignable renvoie une erreur claire tout de suite au lieu de bloquer.
+    if (!probeAccessible(directory, m_probeTimeoutMs)) {
+        if (error) *error = QStringLiteral("source injoignable (endormie ou deconnectee ?) : "
+                                           "impossible d'ecrire le contexte dans %1").arg(directory);
+        return false;
+    }
 
     // Préserver `created` d'un contexte antérieur ; toujours rafraîchir `updated`.
     const QString nowLocal = QDateTime::currentDateTime().toString(Qt::ISODate);
@@ -518,6 +526,11 @@ bool PhotoModule::putContext(const QString& directory, const QString& context,
 
 QByteArray PhotoModule::thumbnail(const QString& path, bool* ok) const {
     if (ok) *ok = false;
+    // Sonde bornée AVANT tout accès disque : isWithinRoots (canonicalFilePath) puis
+    // exists() bloqueraient ~180 s sur une source endormie et gèleraient ce worker.
+    // absolutePath() est purement lexical (aucun stat), donc sûr même mont figé.
+    if (!probeAccessible(QFileInfo(path).absolutePath(), m_probeTimeoutMs))
+        return {};
     // Garde-fou : ne servir que des fichiers sous une racine autorisee, existants.
     if (!isWithinRoots(path, m_roots))
         return {};
@@ -555,6 +568,12 @@ bool PhotoModule::deleteContext(const QString& directory, QJsonObject* out, QStr
     if (!m_readRepo) { if (error) *error = QStringLiteral("base non ouverte"); return false; }
     if (matchingRoot(directory).isEmpty()) {
         if (error) *error = QStringLiteral("le dossier %1 n'est sous aucune racine autorisee").arg(directory);
+        return false;
+    }
+    // Source endormie : sonde bornée avant de toucher le montage (voir putContext).
+    if (!probeAccessible(directory, m_probeTimeoutMs)) {
+        if (error) *error = QStringLiteral("source injoignable (endormie ou deconnectee ?) : "
+                                           "impossible de retirer le contexte de %1").arg(directory);
         return false;
     }
     QString rerr;
