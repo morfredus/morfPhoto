@@ -69,6 +69,26 @@ PhotoApi::Result PhotoApi::handle(const QByteArray& method, const QString& path,
         if (method != "GET")
             return error(405, QStringLiteral("method_not_allowed"));
         if (seg.size() == 1) {
+            // Echantillon representatif d'un dossier (apercu de qualification) : `count`
+            // chemins repartis sur toute la journee et dedupliques par radical (jamais
+            // le RAW ET le JPEG d'une meme prise). Distinct de la pagination : on ne veut
+            // PAS les N premieres, qui sont souvent la meme scene.
+            if (query.hasQueryItem(QStringLiteral("sample"))) {
+                const QString dir = query.queryItemValue(QStringLiteral("directory"), QUrl::FullyDecoded);
+                if (dir.isEmpty())
+                    return error(400, QStringLiteral("bad_request"),
+                                 QStringLiteral("`sample` requiert `directory`"));
+                bool okN = false;
+                int n = query.queryItemValue(QStringLiteral("sample")).toInt(&okN);
+                if (!okN || n < 1)
+                    return error(400, QStringLiteral("bad_request"),
+                                 QStringLiteral("`sample` doit etre un entier positif"));
+                n = qMin(n, 100);
+                QJsonArray arr;
+                for (const QString& p : m_module->directorySample(dir, n))
+                    arr.append(QJsonObject{{QStringLiteral("path"), p}});
+                return items(arr);
+            }
             // Liste paginée + filtrée.
             const int page = positiveIntParam(query, QStringLiteral("page"), 1);
             int pageSize   = positiveIntParam(query, QStringLiteral("page_size"), kDefaultPageSize);

@@ -3,6 +3,17 @@
 Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/)
 et du [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [0.14.0] - 2026-09-06
+
+### Added
+
+- **Representative folder sampling for the preview** (`GET /api/v1/photos?directory=…&sample=N`).
+  Returns N image paths **spread across the whole folder** and **deduplicated by stem**
+  (filename without extension), so a shot's RAW and JPEG count once and the preview never
+  shows two near-identical frames. Distinct from pagination: taking the first N photos
+  tended to return the same scene (a RAW+JPEG pair, or a burst), giving a poor overview.
+  Reads the database only (no mount access, so a sleeping source cannot block it).
+
 ## [0.13.1] - 2026-09-06
 
 ### Fixed

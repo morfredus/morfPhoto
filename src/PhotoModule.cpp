@@ -431,6 +431,9 @@ QJsonObject PhotoModule::summary() const {
 QJsonObject PhotoModule::listPhotos(const QVariantMap& filters, int page, int pageSize) const {
     return m_readRepo ? m_readRepo->listPhotos(filters, page, pageSize) : QJsonObject{};
 }
+QStringList PhotoModule::directorySample(const QString& directory, int count) const {
+    return m_readRepo ? m_readRepo->directorySample(directory, count) : QStringList{};
+}
 QJsonObject PhotoModule::getPhoto(int fileId, bool* found) const {
     if (!m_readRepo) { if (found) *found = false; return {}; }
     return m_readRepo->getPhoto(fileId, found);

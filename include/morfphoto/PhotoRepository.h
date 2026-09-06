@@ -6,6 +6,7 @@
 
 #pragma once
 #include <QString>
+#include <QStringList>
 #include <QVector>
 #include <QJsonObject>
 #include <QJsonArray>
@@ -98,6 +99,11 @@ public:
     // --- Lectures pour l'API ---
     QJsonObject summary();
     QJsonObject listPhotos(const QVariantMap& filters, int page, int pageSize);
+    // Echantillon REPRESENTATIF d'un dossier pour l'apercu : `count` chemins repartis
+    // sur toute la journee (pas les N premiers), et dedupliques par radical (nom sans
+    // extension) pour ne pas prendre le RAW ET le JPEG d'une meme prise. Voir la note
+    // dans PhotoRepository.cpp.
+    QStringList directorySample(const QString& directory, int count);
     QJsonObject getPhoto(int fileId, bool* found);
     QJsonArray  distinctCameras();
     QJsonArray  distinctLenses();

@@ -557,6 +557,51 @@ QJsonObject PhotoRepository::listPhotos(const QVariantMap& filters, int page, in
     return o;
 }
 
+QStringList PhotoRepository::directorySample(const QString& directory, int count) {
+    if (count < 1)
+        count = 1;
+    QSqlQuery q(db());
+    // Ordre par prise de vue puis NOM : un RAW et son JPEG (meme prise, meme instant)
+    // tombent cote a cote, ce qui rend la deduplication par radical fiable.
+    run(q, QStringLiteral(
+             "SELECT path, filename FROM files "
+             "WHERE directory = ? AND state = 'present' "
+             "ORDER BY taken_at IS NULL, taken_at, filename, id"),
+        {directory});
+
+    // Une entree par PRISE : on deduplique par radical (nom sans extension), pour ne
+    // pas compter deux fois le RAW et le JPEG d'une meme photo.
+    QStringList paths;
+    QSet<QString> seenStems;
+    while (q.next()) {
+        const QString path     = q.value(0).toString();
+        const QString filename = q.value(1).toString();
+        const int dot  = filename.lastIndexOf(QLatin1Char('.'));
+        const QString stem = (dot > 0 ? filename.left(dot) : filename).toLower();
+        if (seenStems.contains(stem))
+            continue;
+        seenStems.insert(stem);
+        paths << path;
+    }
+
+    // Echantillon REPARTI sur tout le dossier, pas les N premieres : deux photos qui
+    // se suivent sont souvent la meme scene (rafale, ou RAW+JPEG deja ecarte). On prend
+    // des prises espacees, centrees dans leur tranche, pour un apercu representatif de
+    // la journee entiere.
+    const int n = paths.size();
+    if (n <= count)
+        return paths;
+    QStringList out;
+    out.reserve(count);
+    for (int i = 0; i < count; ++i) {
+        qint64 idx = (static_cast<qint64>(i) * n) / count + (n / count) / 2;
+        if (idx >= n)
+            idx = n - 1;
+        out << paths.at(static_cast<int>(idx));
+    }
+    return out;
+}
+
 QJsonObject PhotoRepository::getPhoto(int fileId, bool* found) {
     QSqlQuery q(db());
     run(q, QStringLiteral("SELECT * FROM files WHERE id = ?"), {fileId});

@@ -55,6 +55,9 @@ public:
     // --- Lectures (API HTTP, thread principal) ---
     QJsonObject summary() const;
     QJsonObject listPhotos(const QVariantMap& filters, int page, int pageSize) const;
+    // Echantillon representatif d'un dossier (chemins repartis + dedupliques RAW/JPEG),
+    // pour l'apercu de qualification. Voir PhotoRepository::directorySample.
+    QStringList directorySample(const QString& directory, int count) const;
     QJsonObject getPhoto(int fileId, bool* found) const;
     QJsonArray  cameras() const;
     QJsonArray  lenses() const;
