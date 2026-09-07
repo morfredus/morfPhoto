@@ -3,6 +3,15 @@
 Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/)
 et du [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [0.14.1] - 2026-09-07
+
+### Changed
+
+- **Resync vendored morfBeacon to 0.7.1.** Picks up the async `/status` reply fix:
+  the beacon status server no longer blocks the event loop draining a reply to a
+  slow client, so the heartbeat can no longer be starved (which produced false
+  "service down" alerts across the parc). No API change.
+
 ## [0.14.0] - 2026-09-06
 
 ### Added
