@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# new-service.sh — Amorce un nouveau service morfSystem a partir de ce template.
+# new-service.sh - Amorce un nouveau service morfSystem a partir de ce template.
 #
 # Copie tout le projet dans un nouveau dossier en remplacant les noms :
 #     morfPhoto  -> <NomCamel>   (projet / bibliotheque / cible CMake)

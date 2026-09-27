@@ -225,7 +225,7 @@ bool Indexer::reconcileFolder(const FolderRow& folder, IndexMode mode, int runId
     refreshContexts(dirs, runId, counts);
 
     // Support amovible (CD/DVD, disque d'archive) : l'absence est NORMALE. Même un
-    // scan mené jusqu'au bout ne vaut jamais suppression ici — un disque éjecté (ou
+    // scan mené jusqu'au bout ne vaut jamais suppression ici - un disque éjecté (ou
     // remplacé par un autre) monté sur un point resté présent mais vide renverrait
     // sinon « 0 fichier vu » et ferait marquer disparue toute l'archive, qui
     // sortirait alors de morfAnalytics. On ne marque donc JAMAIS disparu un fichier

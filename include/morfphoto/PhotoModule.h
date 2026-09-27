@@ -157,7 +157,7 @@ private:
     bool        m_stayOpen = true;
     // Cadence de la réconciliation automatique. Défaut : 0 => passe automatique
     // DÉSACTIVÉE, indexation UNIQUEMENT à la demande (API /index ou bouton PhotoHub).
-    // C'est le mode qui ne met AUCUNE pression de fond sur la machine — le choix par
+    // C'est le mode qui ne met AUCUNE pression de fond sur la machine - le choix par
     // défaut. Une valeur positive réactive une passe périodique (ex. 86400000 = une
     // fois par jour) ; attention, une passe re-parcourt et `stat` tout l'arbre
     // surveillé plus une sonde par racine, coûteux surtout sur un montage réseau.

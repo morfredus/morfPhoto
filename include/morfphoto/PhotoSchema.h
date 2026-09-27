@@ -153,7 +153,7 @@ inline QStringList schemaV3Statements() {
 //   - `analytics_excluded` : sortir une sélection des ANALYSES sans effacer ses
 //     données. Les fichiers restent indexés (consultables, restaurables), mais les
 //     agrégats analytiques (dataset, années, boîtiers, objectifs, focales) les
-//     ignorent. Réversible, non destructif — à distinguer de la purge.
+//     ignorent. Réversible, non destructif - à distinguer de la purge.
 // Colonnes additives, valeurs par défaut neutres pour tout l'historique existant.
 inline QStringList schemaV4Statements() {
     return {

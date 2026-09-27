@@ -111,7 +111,7 @@ bool PhotoModule::start() {
     // Surveillance périodique : réconciliation incrémentale à cadence fixe. Une
     // cadence <= 0 désactive complètement l'automatique : aucune passe périodique,
     // aucune passe au démarrage. La base n'évolue plus alors que sur demande
-    // explicite (API /index ou bouton PhotoHub) — utile pour ne mettre AUCUNE
+    // explicite (API /index ou bouton PhotoHub) - utile pour ne mettre AUCUNE
     // pression de fond sur une machine modeste ou une source réseau.
     if (m_intervalMs > 0) {
         m_watchTimer = new QTimer(this);

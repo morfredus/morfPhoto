@@ -8,7 +8,7 @@
   "configurePresets": [
     {
       "name": "linux",
-      "displayName": "morfPhoto (Linux x86_64 natif — Linux ou WSL2)",
+      "displayName": "morfPhoto (Linux x86_64 natif - Linux ou WSL2)",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build",
       "cacheVariables": {

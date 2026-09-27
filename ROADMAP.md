@@ -1,21 +1,23 @@
 # Roadmap - morfPhoto
 
-Ce dépôt est un **template** : il doit rester minimal, générique et fonctionnel du
-premier coup. On n'y ajoute que ce qui sert à **tous** les services, jamais du
-métier.
+morfPhoto a une seule responsabilité : être la source de vérité des métadonnées
+d'une photothèque locale (EXIF brut, présence des fichiers, contexte photographique
+par dossier) et les servir en HTTP. Cette feuille de route se limite à ce périmètre.
 
 ## Pistes
 
-- **Tests d'exemple** (un petit test du serveur HTTP et du registre) que les
-  services clonés héritent.
-- **CI d'exemple** (`.github/workflows`) : build multi-plateforme.
-- **`scripts/windows/update-service.ps1`** (pendant Windows de `service.py update`).
-- **Option d'authentification** du serveur HTTP (jeton) réutilisable.
-- **Squelette de `docs/fr/PROTOCOL.md`** à remplir par le service cloné.
-- **Rechargement de config** (SIGHUP) générique.
+Aucune piste propre au service n'est ouverte pour l'instant. Les évolutions qui le
+traversent (contrat de contexte photographique `morfphoto-context/2`, page Photo de
+morfAnalytics, dialogue avec PhotoHub) sont suivies dans les notes d'évolution du
+parc, car elles engagent plusieurs dépôts à la fois.
 
 ## Non-objectifs
 
-- Aucune logique métier (capteurs, notifications, collecte…) : elle vit dans les
-  services qui clonent ce template.
-- Pas de dépendance externe au-delà de Qt (morfBeacon reste vendoré).
+- **Aucune analyse métier** : regroupement, déduplication et interprétation vivent
+  dans morfAnalytics, qui lit l'API de morfPhoto.
+- **Aucune écriture dans les photos** : les fichiers et leur EXIF ne sont jamais
+  modifiés. Le seul fichier que morfPhoto écrit dans une source est le
+  `.morfphoto.json` d'un dossier ; une source réseau n'est d'ailleurs montée en
+  écriture que si elle est déclarée `writable`.
+- **Aucune suppression implicite** : un fichier disparu est marqué absent, sa purge
+  reste un geste explicite.

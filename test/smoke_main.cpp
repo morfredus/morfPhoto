@@ -1,5 +1,5 @@
 /*
- * morfPhoto — test de fumée headless (aucun réseau, aucun ExifTool).
+ * morfPhoto - test de fumée headless (aucun réseau, aucun ExifTool).
  *
  * Vérifie les invariants du domaine : classification des types, garde-fou de
  * périmètre, souveraineté du mapping EXIF (sur un JSON figé), et tout le cycle

@@ -3,6 +3,28 @@
 Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/)
 et du [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [0.14.3] - 2026-09-27
+
+### Changed
+
+- Re-vendored morfBeacon to 0.7.2 (documentation-only release; `include/` and
+  `src/` unchanged).
+
+## [0.14.2] - 2026-09-27
+
+### Fixed
+
+- **`ROADMAP.md` was the template's.** It still said "this repository is a template"
+  and listed template chores. It now states morfPhoto's own scope and non-goals
+  (no business analysis, no write to photos except a folder's `.morfphoto.json`, no
+  implicit deletion).
+
+### Changed
+
+- Re-vendored morfDeploy to 0.20.7 (dead-code removal and punctuation only; no
+  behaviour change).
+- Em dashes replaced by `-` in the project's own files.
+
 ## [0.14.1] - 2026-09-07
 
 ### Changed
@@ -322,7 +344,7 @@ et du [versionnage sémantique](https://semver.org/lang/fr/).
   `/etc/morfsystem/morfphoto/morfphoto.json`, en **sauvegardant** l'ancien fichier
   (`.bak-<date>`) et en **affichant le diff** appliqué, puis redémarre le service.
   Contrairement à `service.py update` (qui n'ajoute que les clés manquantes), il
-  **remplace** la valeur déployée — c'est la bonne commande après avoir changé une
+  **remplace** la valeur déployée - c'est la bonne commande après avoir changé une
   racine ou `watch.interval_ms`. Options `--no-restart`, `--if-absent`, `--help` ;
   testable sans root via `MORF_SUDO`/`MORF_CONFIG_DIR`.
 
@@ -333,7 +355,7 @@ et du [versionnage sémantique](https://semver.org/lang/fr/).
 - **Indexation à la demande par défaut.** Le défaut de `watch.interval_ms` passe de
   86400000 (une fois par jour) à **`0`** : plus aucune passe automatique, ni périodique
   ni au démarrage. L'indexation ne se fait plus que sur demande explicite (bouton
-  PhotoHub ou `POST /api/v1/index`) — aucune pression de fond sur la machine. Une cadence
+  PhotoHub ou `POST /api/v1/index`) - aucune pression de fond sur la machine. Une cadence
   périodique reste possible en mettant une valeur positive. Exemple de config et README
   (FR + EN) alignés.
 
@@ -351,7 +373,7 @@ et du [versionnage sémantique](https://semver.org/lang/fr/).
 ### Ajouté
 
 - **Désactivation complète de l'automatique** : `watch.interval_ms` à `0` (ou négatif)
-  supprime toute passe de fond — plus de passe périodique ni de passe au démarrage. La
+  supprime toute passe de fond - plus de passe périodique ni de passe au démarrage. La
   base n'évolue alors que sur demande explicite. Corrige aussi un piège : `0` faisait
   auparavant tourner le timer en continu.
 - **Cadence exposée dans `/api/v1/index/status`** : objet `watch` `{auto, interval_ms}`,

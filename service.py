@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install, update or remove this service — on Linux, Windows or a Raspberry Pi.
+"""Install, update or remove this service - on Linux, Windows or a Raspberry Pi.
 
     ./service.py install       build if needed, install, start
     ./service.py update        rebuild, replace the binary, restart

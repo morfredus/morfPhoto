@@ -1,5 +1,5 @@
 /*
- * morfPhoto — exemple de demonstration
+ * morfPhoto - exemple de demonstration
  * Copyright (C) 2026 morfredus
  * SPDX-License-Identifier: GPL-3.0-only
  *
