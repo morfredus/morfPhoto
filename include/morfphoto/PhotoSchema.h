@@ -23,7 +23,7 @@
 // -----------------------------------------------------------------------------
 namespace morfphoto {
 
-inline constexpr int kSchemaVersion = 5;
+inline constexpr int kSchemaVersion = 6;
 
 // Instructions de la migration 001 (création initiale). La colonne calculée
 // `taken_year` permet de regrouper par année sans reparser la date à chaque fois.
@@ -198,6 +198,18 @@ inline QStringList schemaV5Statements() {
     };
 }
 
+// Migration 006 : index composite (directory, state) sur `files`. summary() joint chaque
+// ligne de `folder_contexts` aux photos présentes de son répertoire (EXISTS corrélé) et
+// compte les répertoires distincts : sans cet index, chaque jointure balayait toute la
+// table. Sur une photothèque de plusieurs dizaines de milliers de fichiers, pendant une
+// indexation, /api/v1/photos/summary durait des minutes et bloquait le thread HTTP unique
+// (donc /status). Index seul : aucune donnée touchée, reconstructible.
+inline QStringList schemaV6Statements() {
+    return {
+        QStringLiteral("CREATE INDEX IF NOT EXISTS idx_files_dir_state ON files(directory, state)"),
+    };
+}
+
 // Instructions à exécuter pour atteindre une version de schéma donnée. Le dépôt
 // applique dans l'ordre chaque version manquante (voir applyMigrations).
 inline QStringList migrationStatements(int version) {
@@ -207,6 +219,7 @@ inline QStringList migrationStatements(int version) {
     case 3:  return schemaV3Statements();
     case 4:  return schemaV4Statements();
     case 5:  return schemaV5Statements();
+    case 6:  return schemaV6Statements();
     default: return {};
     }
 }

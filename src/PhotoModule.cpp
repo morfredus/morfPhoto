@@ -426,7 +426,25 @@ QJsonObject PhotoModule::indexStatus() const {
 // --- Lectures ---------------------------------------------------------------
 
 QJsonObject PhotoModule::summary() const {
-    return m_readRepo ? m_readRepo->summary() : QJsonObject{};
+    if (!m_readRepo)
+        return {};
+    // Le resume est couteux (DISTINCT, jointures par repertoire) et PhotoHub l'interroge en
+    // boucle, sur le thread HTTP UNIQUE : pendant une indexation, les appels s'empilaient
+    // et /status (donc morfMonitor) comme PhotoHub expiraient. On le garde donc en cache :
+    // 10 s au repos, 60 s pendant une passe (les compteurs bougent, mais un resume legerement
+    // perime vaut mieux qu'un service muet). Meme thread que les autres lectures : pas de verrou.
+    bool indexing;
+    {
+        QMutexLocker lock(&m_stateMutex);
+        indexing = m_indexing;
+    }
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    const qint64 ttl = indexing ? 60000 : 10000;
+    if (m_summaryAtMs == 0 || now - m_summaryAtMs > ttl || m_summaryCache.isEmpty()) {
+        m_summaryCache = m_readRepo->summary();
+        m_summaryAtMs  = QDateTime::currentMSecsSinceEpoch();
+    }
+    return m_summaryCache;
 }
 QJsonObject PhotoModule::listPhotos(const QVariantMap& filters, int page, int pageSize) const {
     return m_readRepo ? m_readRepo->listPhotos(filters, page, pageSize) : QJsonObject{};

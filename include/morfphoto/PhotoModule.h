@@ -174,6 +174,9 @@ private:
     PhotoRepository* m_readRepo = nullptr;  // connexion du thread principal
     QTimer*          m_watchTimer = nullptr;
 
+    // Cache du resume (thread HTTP uniquement) : voir PhotoModule::summary().
+    mutable QJsonObject m_summaryCache;
+    mutable qint64      m_summaryAtMs = 0;
     mutable QMutex m_stateMutex;         // protège le drapeau et l'état observable
     bool           m_indexing = false;
     QString        m_startedAt;          // ISO UTC, lisible (API existante)

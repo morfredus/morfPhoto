@@ -3,6 +3,17 @@
 Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/)
 et du [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [0.14.8] - 2026-10-15
+
+### Fixed
+
+- Schema v6: composite index `files(directory, state)`. `/api/v1/photos/summary` (polled by
+  PhotoHub) joined every folder context to the files of its directory with a full table scan;
+  during an indexing pass it took minutes, blocked the single HTTP thread and made `/status`
+  and PhotoHub time out ("morfPhoto injoignable"). The migration runs once at startup.
+- The summary is cached (10 s when idle, 60 s during an indexing pass), so repeated polling no
+  longer recomputes it on the single HTTP thread.
+
 ## [0.14.7] - 2026-10-15
 
 ### Fixed
