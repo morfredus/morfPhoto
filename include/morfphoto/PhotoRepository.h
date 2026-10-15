@@ -98,6 +98,8 @@ public:
 
     // --- Lectures pour l'API ---
     QJsonObject summary();
+    // Compteurs LEGERS pour /status (3 COUNT simples, sans DISTINCT ni sous-requete).
+    QJsonObject statusCounts();
     QJsonObject listPhotos(const QVariantMap& filters, int page, int pageSize);
     // Echantillon REPRESENTATIF d'un dossier pour l'apercu : `count` chemins repartis
     // sur toute la journee (pas les N premiers), et dedupliques par radical (nom sans

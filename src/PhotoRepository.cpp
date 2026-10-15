@@ -452,6 +452,23 @@ void PhotoRepository::logError(int runId, const QVariant& path, const QString& s
 
 // --- Lectures ---------------------------------------------------------------
 
+QJsonObject PhotoRepository::statusCounts() {
+    // /status est servi par le thread HTTP UNIQUE et sonde par morfMonitor (timeout
+    // 3 s). summary() (DISTINCT, EXISTS correles) dure plus de 10 s sur une grosse base
+    // pendant une indexation : /status devenait muet et l'activite en cours restait
+    // invisible. Ici, uniquement les trois compteurs que /status expose.
+    auto scalar = [this](const QString& sql) -> int {
+        QSqlQuery q(db());
+        q.exec(sql);
+        return q.next() ? q.value(0).toInt() : 0;
+    };
+    QJsonObject o;
+    o["files_present"]  = scalar(QStringLiteral("SELECT COUNT(*) FROM files WHERE state='present'"));
+    o["files_missing"]  = scalar(QStringLiteral("SELECT COUNT(*) FROM files WHERE state='missing'"));
+    o["folders_active"] = scalar(QStringLiteral("SELECT COUNT(*) FROM folders WHERE enabled=1"));
+    return o;
+}
+
 QJsonObject PhotoRepository::summary() {
     auto scalar = [this](const QString& sql) -> int {
         QSqlQuery q(db());

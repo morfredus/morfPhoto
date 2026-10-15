@@ -795,7 +795,7 @@ void PhotoModule::reconcileRoots() {
 QJsonObject PhotoModule::statusJson() const {
     QJsonObject o = observableState();
     if (m_readRepo && m_readRepo->isOpen()) {
-        const QJsonObject s = m_readRepo->summary();
+        const QJsonObject s = m_readRepo->statusCounts();
         o["files_present"]  = s.value(QStringLiteral("files_present"));
         o["files_missing"]  = s.value(QStringLiteral("files_missing"));
         o["folders_active"] = s.value(QStringLiteral("folders_active"));

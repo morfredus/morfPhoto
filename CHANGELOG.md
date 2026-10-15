@@ -3,6 +3,18 @@
 Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/)
 et du [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [0.14.7] - 2026-10-15
+
+### Fixed
+
+- `/status` no longer runs the full `summary()` (DISTINCT and correlated EXISTS queries):
+  during an indexing pass it took over 10 s on the Pi, so morfMonitor (3 s timeout) never
+  saw the running activity. It now uses three light counters (`statusCounts`).
+
+### Changed
+
+- Resync the vendored morfBeacon (0.8.0).
+
 ## [0.14.6] - 2026-10-10
 
 ### Changed
