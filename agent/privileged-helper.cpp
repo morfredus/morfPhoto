@@ -180,6 +180,7 @@ QString classifyMountError(const QString& output) {
         || u.contains(QLatin1String("CONNECTION TIMED OUT"))
         || u.contains(QLatin1String("CONNECTION REFUSED"))
         || u.contains(QLatin1String("UNKNOWN HOST"))
+        || u.contains(QLatin1String("COULD NOT RESOLVE ADDRESS"))
         || u.contains(QLatin1String("NAME OR SERVICE NOT KNOWN")))
         return QStringLiteral("host_unreachable");
     return QStringLiteral("cifs_mount_failed");

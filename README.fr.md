@@ -2,7 +2,7 @@
 
 *Lire dans une autre langue : [English](README.md) · **Français** (ce document).*
 
-[![Version](https://img.shields.io/badge/version-0.14.9-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.15.0-blue)](CHANGELOG.md)
 ![C++](https://img.shields.io/badge/C%2B%2B-17-00599C?logo=cplusplus)
 ![Qt](https://img.shields.io/badge/Qt-6-41CD52?logo=qt)
 ![Build](https://img.shields.io/badge/CMake-3.21+-064F8C?logo=cmake)
@@ -79,7 +79,7 @@ PUT  /api/v1/context             écrit .morfphoto.json : {directory, context, s
 DELETE /api/v1/context           retire .morfphoto.json (?directory=...) : le dossier redevient non qualifié
 GET  /api/v1/thumbnail           vignette image/jpeg d'un fichier (?path=...) ; aperçu embarqué via exiftool (JPEG comme RAW)
 GET  /api/v1/roots               racines autorisées (config + montages SMB validés)
-GET  /api/v1/sources             sources SMB poussées
+GET  /api/v1/sources             sources SMB poussées (+ mounted, reachable)
 GET  /api/v1/sources/ready       helper privilégié démarrable
 POST /api/v1/sources             monte un partage Windows sous /mnt/photos_<hostname>
 POST /api/v1/purge               suppression DÉFINITIVE : {"scope":"folder|year|camera|all","value":...}

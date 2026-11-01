@@ -661,7 +661,19 @@ bool PhotoModule::addSource(const QString& host, const QString& share, const QSt
 }
 
 QJsonArray PhotoModule::listSources() const {
-    return m_sourceManager.listSources();
+    // `mounted` ne dit que « le point de montage existe » : un montage soft survit a la
+    // mort de la machine source. `reachable` ajoute une sonde BORNEE (m_probeTimeoutMs,
+    // jamais un statvfs nu qui figerait ~180 s) pour reperer une source eteinte ou dont
+    // l'adresse a change, et laisser PhotoHub proposer de reconfigurer l'acces.
+    QJsonArray out;
+    for (const QJsonValue& v : m_sourceManager.listSources()) {
+        QJsonObject o = v.toObject();
+        const QString mp = o.value(QStringLiteral("mountpoint")).toString();
+        o[QStringLiteral("reachable")] = o.value(QStringLiteral("mounted")).toBool()
+            && !mp.isEmpty() && probeAccessible(mp, m_probeTimeoutMs);
+        out.append(o);
+    }
+    return out;
 }
 
 bool PhotoModule::helperReady(QJsonObject* out, QString* error) const {

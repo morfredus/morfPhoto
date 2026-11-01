@@ -3,6 +3,21 @@
 Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/)
 et du [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [0.15.0] - 2026-11-02
+
+### Added
+
+- **`GET /api/v1/sources` reports `reachable`** for each pushed source: a bounded probe of the
+  mount point (same `availability_timeout_ms` as the indexer, never a bare `statvfs`). Unlike
+  `mounted`, it turns false when the source machine is off or its address changed, so PhotoHub
+  can offer to reconfigure the access instead of failing silently.
+
+### Fixed
+
+- The privileged helper now classes mount.cifs "could not resolve address" as
+  `host_unreachable` (it fell back to the generic `cifs_mount_failed`), so a client can retry
+  a source by IP address after a hostname that the server cannot resolve.
+
 ## [0.14.9] - 2026-11-01
 
 ### Fixed
