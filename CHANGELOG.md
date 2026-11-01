@@ -3,6 +3,14 @@
 Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/)
 et du [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [0.14.9] - 2026-11-01
+
+### Fixed
+
+- ISO read from Ricoh GR III (and other Pentax-family maker notes) was wrong (9 instead of 200):
+  a bare `-ISO#` let ExifTool pick the maker-note raw index code. The extractor now requests
+  `-ExifIFD:ISO#` explicitly. Existing photos need a full reindex to correct stored values.
+
 ## [0.14.8] - 2026-10-15
 
 ### Fixed

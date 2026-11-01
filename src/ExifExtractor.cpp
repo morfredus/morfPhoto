@@ -27,7 +27,10 @@ const char* const kTags[] = {
     "-FocalLength#", "-FocalLengthIn35mmFormat#", "-FNumber#",
     "-ExposureTime#",          // vitesse numérique en secondes -> shutter_speed_s
     "-ShutterSpeed",           // vitesse lisible « 1/250 » -> shutter_speed
-    "-ISO#", "-ExposureCompensation#", "-Rating#",
+    // ISO : tag EXIF standard explicite. Un « -ISO# » nu laisse exiftool choisir parmi
+    // les doublons, et sur les Ricoh/Pentax il renvoie le code d'index brut des notes
+    // constructeur (9 pour ISO 200) au lieu de la vraie valeur.
+    "-ExifIFD:ISO#", "-ExposureCompensation#", "-Rating#",
     "-GPSLatitude#", "-GPSLongitude#",
 };
 
