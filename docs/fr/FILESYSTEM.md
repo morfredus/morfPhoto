@@ -2,7 +2,7 @@
 
 Ce document fixe la doctrine du parc morfSystem sur la séparation entre
 configuration, état persistant et programme. Il sert de référence à tous les
-services clonés depuis ce modèle.
+services du parc.
 
 ## Le principe
 

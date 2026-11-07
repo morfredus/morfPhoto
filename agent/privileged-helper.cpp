@@ -39,10 +39,12 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QProcess>
+#include <QProcessEnvironment>
 #include <QRegularExpression>
 #include <QTextStream>
 
 #ifdef Q_OS_UNIX
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
@@ -119,10 +121,36 @@ int refuse(const QString& message) {
     return fail(r, r.code, message);
 }
 
+// Chemin ABSOLU d'un outil systeme. Ce binaire tourne en root et est lance par un
+// compte non privilegie : resoudre « mount » via le PATH de l'appelant laisserait ce
+// dernier substituer son propre binaire. Seuls des dossiers appartenant a root sont
+// consultes (usrmerge : /bin pointe vers /usr/bin, sinon l'ancien emplacement).
+QString absoluteTool(const QString& name) {
+    if (name.contains(QLatin1Char('/')))
+        return name;
+    for (const char* dir : {"/usr/bin", "/bin", "/usr/sbin", "/sbin"}) {
+        const QString candidate = QLatin1String(dir) + QLatin1Char('/') + name;
+        if (QFileInfo::exists(candidate))
+            return candidate;
+    }
+    return QStringLiteral("/usr/bin/") + name;
+}
+
+// Environnement impose aux sous-processus : jamais celui de l'appelant (PATH, LD_*,
+// variables de locale...). LC_ALL=C fige aussi la langue des messages de mount que
+// classifyMountError() compare en anglais. mount appelle mount.cifs via ce PATH.
+QProcessEnvironment cleanEnvironment() {
+    QProcessEnvironment env;
+    env.insert(QStringLiteral("PATH"), QStringLiteral("/usr/sbin:/usr/bin:/sbin:/bin"));
+    env.insert(QStringLiteral("LC_ALL"), QStringLiteral("C"));
+    return env;
+}
+
 CmdResult run(const QString& program, const QStringList& arguments, int timeoutMs = 45000) {
     QProcess process;
     process.setProcessChannelMode(QProcess::MergedChannels);
-    process.start(program, arguments);
+    process.setProcessEnvironment(cleanEnvironment());
+    process.start(absoluteTool(program), arguments);
     CmdResult out;
     if (!process.waitForStarted(10000)) {
         out.output = QStringLiteral("impossible de demarrer %1").arg(program);
@@ -272,21 +300,60 @@ bool sameCredentials(const QString& path, const QByteArray& wanted) {
     return f.readAll() == wanted;
 }
 
-bool writeCredentials(const QString& path, const QByteArray& body) {
-    QFile f(path);
-    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate))
-        return false;
-    const qint64 n = f.write(body);
-    f.close();
-    if (n != body.size())
-        return false;
 #ifdef Q_OS_UNIX
-    if (::chmod(path.toUtf8().constData(), S_IRUSR | S_IWUSR) != 0)
+// Ecriture ATOMIQUE d'un fichier : temporaire cree dans le MEME dossier avec le mode
+// final des la creation (O_EXCL, jamais de lien suivi), proprietaire pose avant toute
+// donnee, fsync, puis rename. Un echec ne laisse jamais un fichier tronque a la place
+// de l'original, et un mot de passe n'est jamais lisible avec un mode permissif.
+bool writeFileAtomic(const QString& path, const QByteArray& data,
+                     mode_t mode, uid_t uid, gid_t gid) {
+    const QByteArray target = path.toUtf8();
+    const QByteArray tmp = target + ".tmp-morfphoto";
+    ::unlink(tmp.constData());
+    const int fd = ::open(tmp.constData(),
+                          O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
+    if (fd < 0)
         return false;
-    if (::chown(path.toUtf8().constData(), 0, 0) != 0)
+    bool ok = ::fchmod(fd, mode) == 0 && ::fchown(fd, uid, gid) == 0;
+    qint64 done = 0;
+    while (ok && done < data.size()) {
+        const ssize_t n = ::write(fd, data.constData() + done, size_t(data.size() - done));
+        if (n <= 0)
+            ok = false;
+        else
+            done += n;
+    }
+    ok = ok && ::fsync(fd) == 0;
+    ok = (::close(fd) == 0) && ok;
+    ok = ok && ::rename(tmp.constData(), target.constData()) == 0;
+    if (!ok) {
+        ::unlink(tmp.constData());
         return false;
-#endif
+    }
+    // Rendre le rename durable : fsync du dossier parent (echec non bloquant).
+    const QByteArray dir = QFileInfo(path).absolutePath().toUtf8();
+    const int dfd = ::open(dir.constData(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (dfd >= 0) {
+        (void)::fsync(dfd);
+        ::close(dfd);
+    }
     return true;
+}
+
+// Proprietaire et mode d'un fichier existant, ou les valeurs par defaut fournies.
+void existingOwnerAndMode(const QString& path, mode_t* mode, uid_t* uid, gid_t* gid) {
+    struct stat st{};
+    if (::stat(path.toUtf8().constData(), &st) == 0) {
+        *mode = st.st_mode & 07777;
+        *uid  = st.st_uid;
+        *gid  = st.st_gid;
+    }
+}
+#endif
+
+bool writeCredentials(const QString& path, const QByteArray& body) {
+    // 0600 root:root des la creation du fichier temporaire (voir writeFileAtomic).
+    return writeFileAtomic(path, body, S_IRUSR | S_IWUSR, 0, 0);
 }
 
 QString fstabLine(const QString& host, const QString& share,
@@ -315,8 +382,11 @@ bool ensureFstab(const QString& host, const QString& share,
     QFile f(QString::fromLatin1(kFstab));
     if (!f.open(QIODevice::ReadOnly))
         return false;
-    const QList<QByteArray> lines = f.readAll().split('\n');
+    QList<QByteArray> lines = f.readAll().split('\n');
     f.close();
+    // Le dernier element vide (apres le \n final) ajouterait une ligne blanche a chaque ecriture.
+    if (!lines.isEmpty() && lines.last().isEmpty())
+        lines.removeLast();
 
     QByteArray kept;
     bool found = false;
@@ -350,11 +420,13 @@ bool ensureFstab(const QString& host, const QString& share,
         *changed = needWrite;
     if (!needWrite)
         return true;
-    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate))
-        return false;
-    f.write(kept);
-    f.close();
-    return true;
+    // fstab est critique au demarrage : remplacement atomique, mode et proprietaire
+    // d'origine conserves (0644 root:root par defaut).
+    mode_t mode = 0644;
+    uid_t uid = 0;
+    gid_t gid = 0;
+    existingOwnerAndMode(QString::fromLatin1(kFstab), &mode, &uid, &gid);
+    return writeFileAtomic(QString::fromLatin1(kFstab), kept, mode, uid, gid);
 }
 
 bool dirIsReadable(const QString& mountpoint) {
@@ -434,33 +506,14 @@ bool addRootToConfig(const QString& mountpoint, bool* changed, QString* error) {
     QFile::remove(bak);
     QFile::copy(QString::fromLatin1(kConfigJson), bak);
 
-    const QString tmp = QString::fromLatin1(kConfigJson) + QStringLiteral(".tmp");
-    QFile tf(tmp);
-    if (!tf.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        *error = QStringLiteral("ecriture temporaire de morfphoto.json impossible");
-        return false;
-    }
-    tf.write(next);
-    tf.close();
-
-    QFile check(tmp);
-    if (!check.open(QIODevice::ReadOnly)) {
-        *error = QStringLiteral("relecture du JSON temporaire impossible");
-        return false;
-    }
-    QJsonParseError pe3{};
-    const QJsonDocument verify = QJsonDocument::fromJson(check.readAll(), &pe3);
-    check.close();
-    if (pe3.error != QJsonParseError::NoError || !verify.isObject()) {
-        QFile::remove(tmp);
-        *error = QStringLiteral("JSON temporaire invalide, fichier original conserve");
-        return false;
-    }
-
-    if (!QFile::remove(QString::fromLatin1(kConfigJson))
-        || !QFile::rename(tmp, QString::fromLatin1(kConfigJson))) {
-        QFile::rename(bak, QString::fromLatin1(kConfigJson));
-        *error = QStringLiteral("remplacement de morfphoto.json impossible ; sauvegarde restauree");
+    // Remplacement atomique, mode 0644 EXPLICITE (le service non privilegie doit relire
+    // le fichier, quel que soit l'umask de l'appelant), proprietaire d'origine conserve.
+    mode_t ignoredMode = 0644;   // le mode d'origine est volontairement ecrase par 0644
+    uid_t uid = 0;
+    gid_t gid = 0;
+    existingOwnerAndMode(QString::fromLatin1(kConfigJson), &ignoredMode, &uid, &gid);
+    if (!writeFileAtomic(QString::fromLatin1(kConfigJson), next, 0644, uid, gid)) {
+        *error = QStringLiteral("remplacement de morfphoto.json impossible ; original conserve");
         return false;
     }
     return true;
@@ -526,8 +579,15 @@ int doMount(const QString& host, const QString& share, const QString& slug, bool
 
     bool remounted = false;
     if (!(sameSource && credsUnchanged && dirIsReadable(r.mountpoint) && modeMatches)) {
-        if (before.present)
-            run(QStringLiteral("umount"), {r.mountpoint}, 15000);
+        if (before.present) {
+            const CmdResult um = run(QStringLiteral("umount"), {r.mountpoint}, 15000);
+            if (!um.ok && readMount(r.mountpoint).present) {
+                addStep(r, QStringLiteral("cifs_unmounted"), false, um.output);
+                return fail(r, QStringLiteral("umount_failed"),
+                            QStringLiteral("demontage de %1 impossible avant remontage : %2")
+                                .arg(r.mountpoint, um.output));
+            }
+        }
 
         // Test reel : PAS de nofail, sinon mount peut "reussir" sur un dossier vide.
         const QString mode = writable ? QStringLiteral("rw") : QStringLiteral("ro");
@@ -652,24 +712,42 @@ int doMount(const QString& host, const QString& share, const QString& slug, bool
 int doUnmount(const QString& mountpoint) {
     Report r;
     r.mountpoint = mountpoint;
-    run(QStringLiteral("umount"), {mountpoint}, 15000);
+    const CmdResult um = run(QStringLiteral("umount"), {mountpoint}, 15000);
+    // Echec = encore monte (un point deja demonte n'est pas une erreur). Arret AVANT de
+    // retirer la ligne fstab : sinon le montage vivant n'aurait plus de trace de config.
+    if (!um.ok && readMount(mountpoint).present) {
+        addStep(r, QStringLiteral("cifs_unmounted"), false, um.output);
+        return fail(r, QStringLiteral("umount_failed"),
+                    QStringLiteral("demontage de %1 impossible : %2").arg(mountpoint, um.output));
+    }
+    addStep(r, QStringLiteral("cifs_unmounted"), true);
 
     QFile f(QString::fromLatin1(kFstab));
-    if (f.open(QIODevice::ReadOnly)) {
-        const QList<QByteArray> lines = f.readAll().split('\n');
-        f.close();
-        const QByteArray needle = QStringLiteral(" %1 ").arg(mountpoint).toUtf8();
-        QByteArray kept;
-        for (const QByteArray& l : lines) {
-            if (l.contains(needle))
-                continue;
-            kept += l;
-            kept += '\n';
-        }
-        if (f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-            f.write(kept);
-            f.close();
-        }
+    if (!f.open(QIODevice::ReadOnly)) {
+        addStep(r, QStringLiteral("fstab_configured"), false, QString::fromLatin1(kFstab));
+        return fail(r, QStringLiteral("fstab_failed"),
+                    QStringLiteral("lecture de /etc/fstab impossible"));
+    }
+    QList<QByteArray> lines = f.readAll().split('\n');
+    f.close();
+    if (!lines.isEmpty() && lines.last().isEmpty())
+        lines.removeLast();
+    const QByteArray needle = QStringLiteral(" %1 ").arg(mountpoint).toUtf8();
+    QByteArray kept;
+    for (const QByteArray& l : lines) {
+        if (l.contains(needle))
+            continue;
+        kept += l;
+        kept += '\n';
+    }
+    mode_t mode = 0644;
+    uid_t uid = 0;
+    gid_t gid = 0;
+    existingOwnerAndMode(QString::fromLatin1(kFstab), &mode, &uid, &gid);
+    if (!writeFileAtomic(QString::fromLatin1(kFstab), kept, mode, uid, gid)) {
+        addStep(r, QStringLiteral("fstab_configured"), false, QString::fromLatin1(kFstab));
+        return fail(r, QStringLiteral("fstab_failed"),
+                    QStringLiteral("modification de /etc/fstab impossible"));
     }
     r.ok = true;
     r.code = QStringLiteral("ok");
@@ -728,8 +806,10 @@ int main(int argc, char** argv) {
             "impossible de prendre l'identite root reelle (setuid/setgid)"));
     const QStringList args = app.arguments();
 
-    static const QRegularExpression kHost(QStringLiteral("^[A-Za-z0-9._-]+$"));
-    static const QRegularExpression kShare(QStringLiteral("^[A-Za-z0-9._$-]+$"));
+    static const QRegularExpression kHost(
+        QRegularExpression::anchoredPattern(QStringLiteral("[A-Za-z0-9._-]+")));
+    static const QRegularExpression kShare(
+        QRegularExpression::anchoredPattern(QStringLiteral("[A-Za-z0-9._$-]+")));
 
     if ((args.size() == 5 || args.size() == 6) && args.at(1) == QStringLiteral("mount")) {
         const QString host  = args.at(2);

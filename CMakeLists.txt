@@ -1,18 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 # =============================================================================
-#  morfPhoto - squelette reutilisable de service morfSystem.
-#
-#  POUR CREER UN NOUVEAU SERVICE : le plus simple est le script de clonage
-#      scripts/new-service.sh   morfmonservice MorfMonService   (Linux/macOS)
-#      scripts/new-service.ps1  morfmonservice MorfMonService   (Windows)
-#  qui copie ce projet en remplacant les noms. Sinon, remplacer a la main :
-#      morfPhoto  (nom du projet / bibliotheque)
-#      morfphoto         (namespace, dossier include, binaire, unite systemd)
-#      MORFPHOTO         (prefixe de macro)
-#
-#  Ensuite : coder le metier dans src/ExampleModule.* (ou de nouveaux modules),
-#  adapter la fabrique (src/ModuleFactory.cpp) et la liste de sources ci-dessous.
+#  morfPhoto - source de verite des metadonnees d'une phototheque locale (morfSystem).
 # =============================================================================
 
 # Version pilotee par le fichier VERSION (convention morfSystem).
@@ -54,14 +43,12 @@ if(NOT TARGET morfBeacon::morfBeacon)
 endif()
 
 # --- Bibliotheque ---------------------------------------------------------
-# >>> A ADAPTER : ajouter/retirer ici les sources de VOS modules metier. <<<
 add_library(morfPhoto STATIC
     src/ModuleRegistry.cpp
     src/HttpServer.cpp
     src/Service.cpp
     src/Paths.cpp                         # resolution des emplacements (doctrine FILESYSTEM.md)
     src/ModuleFactory.cpp
-    src/ExampleModule.cpp                 # <-- remplacer par votre metier
     # --- domaine photo (metier morfPhoto) ---
     src/PhotoRepository.cpp               # depot SQLite : source de verite des metadonnees
     src/ExifExtractor.cpp                 # extraction ExifTool (QProcess -stay_open)
@@ -87,7 +74,6 @@ add_library(morfPhoto STATIC
     include/morfphoto/ModuleFactory.h
     include/morfphoto/HttpServer.h
     include/morfphoto/Service.h
-    include/morfphoto/ExampleModule.h  # <-- remplacer par votre metier
     include/morfphoto/Version.h
 )
 add_library(morfPhoto::morfPhoto ALIAS morfPhoto)
@@ -131,16 +117,4 @@ if(MORFPHOTO_BUILD_SMOKE)
     add_executable(morfphoto_smoke test/smoke_main.cpp)
     target_link_libraries(morfphoto_smoke PRIVATE morfPhoto::morfPhoto)
     add_test(NAME smoke COMMAND morfphoto_smoke)
-endif()
-
-# --- Exemple (compile seulement en build autonome, pas via add_subdirectory) -
-if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
-    set(_morfphoto_standalone ON)
-else()
-    set(_morfphoto_standalone OFF)
-endif()
-option(MORFPHOTO_BUILD_EXAMPLES "Compiler l'exemple de demonstration" ${_morfphoto_standalone})
-
-if(MORFPHOTO_BUILD_EXAMPLES)
-    add_subdirectory(examples/minimal)
 endif()

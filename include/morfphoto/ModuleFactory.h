@@ -18,9 +18,9 @@ class IModule;
 // -----------------------------------------------------------------------------
 // ModuleFactory : fabrique un IModule a partir d'une declaration (ModuleDef).
 //
-// Point d'extension COMPILE-TIME. >>> POUR AJOUTER UN MODULE METIER : ecrivez sa
-// classe (heritant d'IModule), ajoutez une branche dans create() et son nom dans
-// knownTypes(). Rien d'autre a modifier. <<<
+// Point d'extension COMPILE-TIME. Pour ajouter un module : ecrire sa
+// classe (heritant d'IModule), ajouter une branche dans create() et son nom dans
+// knownTypes(). Rien d'autre a modifier.
 // -----------------------------------------------------------------------------
 namespace ModuleFactory {
 
@@ -28,7 +28,7 @@ namespace ModuleFactory {
 // `error` (optionnel) est alors renseigne.
 IModule* create(const ModuleDef& def, QString* error = nullptr, QObject* parent = nullptr);
 
-// Types de modules connus (ex. {"example"}).
+// Types de modules connus (ex. {"photo"}).
 QStringList knownTypes();
 
 } // namespace ModuleFactory

@@ -50,7 +50,9 @@ QStringList argBlock(const QString& path) {
          << QStringLiteral("-d") << QString::fromLatin1(kDateFormat);
     for (const char* t : kTags)
         args << QString::fromLatin1(t);
-    args << path;
+    // `--` : ExifTool traite ensuite tout ce qui suit comme un nom de fichier, meme s'il
+    // commence par `-` (sinon un fichier nomme « -execute » serait lu comme une option).
+    args << QStringLiteral("--") << path;
     return args;
 }
 
@@ -87,6 +89,19 @@ QVariant intVar(const QJsonObject& o, const char* key) {
 }
 
 } // namespace
+
+int ExifExtractor::markerPos(const QByteArray& buf, const QByteArray& marker) {
+    int from = 0;
+    while ((from = buf.indexOf(marker, from)) >= 0) {
+        const bool lineStart = from == 0 || buf.at(from - 1) == '\n';
+        const int end = from + marker.size();
+        const bool lineEnd = end < buf.size() && (buf.at(end) == '\n' || buf.at(end) == '\r');
+        if (lineStart && lineEnd)
+            return from;
+        ++from;
+    }
+    return -1;
+}
 
 bool ExifExtractor::probe(const QString& binary, QString* detail) {
     QProcess proc;
@@ -157,6 +172,13 @@ ExifData ExifExtractor::extract(const QString& path, QString* error) {
     QString* err = error ? error : &localError;
     err->clear();
 
+    // Le protocole argfile est ligne par ligne : un \n ou \r dans le nom injecterait des
+    // arguments ExifTool arbitraires (ex. « -overwrite_original »). Fichier refuse.
+    if (path.contains(QLatin1Char('\n')) || path.contains(QLatin1Char('\r'))) {
+        *err = QStringLiteral("ExifTool: nom de fichier avec saut de ligne refuse");
+        return {};
+    }
+
     const QString json = (m_stayOpen && m_proc) ? readPersistent(path, err)
                                                 : readOnce(path, err);
     if (!err->isEmpty())
@@ -176,16 +198,20 @@ QString ExifExtractor::readPersistent(const QString& path, QString* error) {
     m_proc->write(payload);
     m_proc->waitForBytesWritten(kTimeoutMs);
 
-    // Lire jusqu'au marqueur {readyN} (exclu de la sortie).
+    // Lire jusqu'au marqueur {readyN} (exclu de la sortie). Le marqueur n'est reconnu
+    // qu'en DEBUT de ligne et suivi d'un saut de ligne : un nom de fichier contenant
+    // « {readyN} » apparait dans le JSON (SourceFile) au milieu d'une ligne et ne doit
+    // pas couper la lecture, sous peine de desynchroniser tout le flux suivant.
     QByteArray buf;
-    while (!buf.contains(marker)) {
+    int at = -1;
+    while ((at = markerPos(buf, marker)) < 0) {
         if (!m_proc->waitForReadyRead(kTimeoutMs)) {
             *error = QStringLiteral("ExifTool: pas de reponse pour %1").arg(path);
             return {};
         }
         buf += m_proc->readAllStandardOutput();
     }
-    return QString::fromUtf8(buf.left(buf.indexOf(marker)));
+    return QString::fromUtf8(buf.left(at));
 }
 
 QString ExifExtractor::readOnce(const QString& path, QString* error) {

@@ -22,9 +22,8 @@ namespace morfphoto {
 //   - expose son etat courant en JSON (statusJson), agrege dans /modules ;
 //   - signale ses mises a jour (updated) pour une reaction eventuelle.
 //
-// >>> POUR CODER VOTRE SERVICE : creez une ou plusieurs sous-classes d'IModule,
-//     enregistrez-les dans ModuleFactory, adaptez les routes HTTP si besoin. <<<
-// Voir ExampleModule pour un squelette minimal fonctionnel.
+// Pour ajouter un module : creer une sous-classe d'IModule et l'enregistrer
+// dans ModuleFactory. Voir PhotoModule pour l'implementation de reference.
 // -----------------------------------------------------------------------------
 class IModule : public QObject {
     Q_OBJECT

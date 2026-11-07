@@ -13,8 +13,7 @@ namespace morfphoto {
 // fillAnnouncedDetail : renseigne le DETAIL annonce du service dans un
 // PresenceConfig, pour que morfbeacon::describeService le serialise dans /status.
 //
-// >>> MODELE. Ce squelette montre a un nouveau service COMMENT se decrire pour
-// >>> le parc. Un service morfSystem se rend « bavard » d'une seule facon :
+// >>> Un service morfSystem se decrit pour le parc. Il se rend « bavard » d'une seule facon :
 // >>>   1. lister ici son API (methode, chemin, resume) ;
 // >>>   2. si -- et seulement si -- il expose une interface web, renseigner
 // >>>      pc.webUiPath / pc.webUiLabel / pc.webUiDescription (voir morfAnalytics

@@ -27,6 +27,7 @@
 #include "morfphoto/Indexer.h"
 #include "morfphoto/ContextFile.h"
 #include "morfphoto/SmbSourceNaming.h"
+#include "morfphoto/OriginCheck.h"
 
 using namespace morfphoto;
 
@@ -473,6 +474,33 @@ int main(int argc, char** argv) {
               "contexte: json retire -> dossier redevient non qualifie");
         crepo.close();
     }
+
+    // --- Revue C++ 2026-11-07 : fonctions pures de securite ---
+    // `$` Qt accepte un NL final : les controles ancres doivent le refuser.
+    CHECK(isValidSourceSlug(QStringLiteral("asus-dev")), "slug valide accepte");
+    CHECK(!isValidSourceSlug(QStringLiteral("asus-dev\n")), "slug avec NL final refuse");
+    CHECK(!isManagedMountpoint(QStringLiteral("/mnt/photos_asus\n")),
+          "point de montage avec NL final refuse");
+    CHECK(isManagedMountpoint(QStringLiteral("/mnt/photos_asus")), "point de montage gere accepte");
+    CHECK(!isNewConventionMountpoint(QStringLiteral("/mnt/photos_a\n")),
+          "point de montage (nouvelle convention) avec NL final refuse");
+
+    // Marqueur stay_open : reconnu seulement seul sur sa ligne.
+    {
+        const QByteArray m = "{ready3}";
+        CHECK(ExifExtractor::markerPos("[{}]\n{ready3}\n", m) == 5, "marqueur seul sur sa ligne reconnu");
+        CHECK(ExifExtractor::markerPos("[{\"SourceFile\":\"/x/{ready3}.jpg\"}]\n", m) < 0,
+              "marqueur dans un nom de fichier ignore");
+        CHECK(ExifExtractor::markerPos("x\n{ready3}", m) < 0, "marqueur sans fin de ligne: attendre");
+        CHECK(ExifExtractor::markerPos("{ready3}\r\n", m) == 0, "marqueur CRLF reconnu");
+    }
+
+    // Anti-CSRF : Origin different de Host sur une ecriture = refus.
+    CHECK(!isCrossOriginWrite("POST", "", "pi:8791"), "sans Origin (client non navigateur): passe");
+    CHECK(!isCrossOriginWrite("POST", "http://pi:8791", "pi:8791"), "meme origine: passe");
+    CHECK(isCrossOriginWrite("POST", "http://evil.example", "pi:8791"), "origine tierce: refus");
+    CHECK(isCrossOriginWrite("DELETE", "null", "pi:8791"), "Origin null: refus");
+    CHECK(!isCrossOriginWrite("GET", "http://evil.example", "pi:8791"), "GET jamais bloque");
 
     repo2.close();
     QDir(base).removeRecursively();

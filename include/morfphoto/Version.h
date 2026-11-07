@@ -16,7 +16,7 @@ namespace morfphoto {
 
 inline QString version() { return QStringLiteral(MORFPHOTO_VERSION); }
 
-// Version du protocole HTTP/JSON expose. >>> A ADAPTER si l'API change. <<<
+// Version du protocole HTTP/JSON expose (a incrementer si l'API change).
 inline constexpr const char* kProtocol = "morfphoto/1";
 
 } // namespace morfphoto

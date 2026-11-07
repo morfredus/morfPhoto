@@ -10,6 +10,10 @@
 
 namespace morfphoto {
 
+// ATTENTION : `$` seul accepte aussi une fin de ligne finale en Qt/PCRE. Les controles
+// ci-dessous passent par anchoredPattern() (debut/fin de chaine stricts) : aucune fin de
+// ligne tolerable dans un slug, un hote ou un chemin de montage envoyes a un helper root.
+
 // -----------------------------------------------------------------------------
 // Identite canonique d'une source SMB poussee par PhotoHub.
 //
@@ -36,13 +40,14 @@ inline QString hostnameSlug(const QString& raw) {
 }
 
 inline bool isValidSourceSlug(const QString& slug) {
-    static const QRegularExpression re(QStringLiteral("^[a-z0-9][a-z0-9._-]*$"));
+    static const QRegularExpression re(QRegularExpression::anchoredPattern(
+        QStringLiteral("[a-z0-9][a-z0-9._-]*")));
     return re.match(slug).hasMatch();
 }
 
 inline bool looksLikeIpv4(const QString& raw) {
     static const QRegularExpression re(
-        QStringLiteral("^\\d{1,3}(?:\\.\\d{1,3}){3}$"));
+        QRegularExpression::anchoredPattern(QStringLiteral("\\d{1,3}(?:\\.\\d{1,3}){3}")));
     return re.match(raw.trimmed()).hasMatch();
 }
 
@@ -58,13 +63,13 @@ inline bool isManagedMountpoint(const QString& path) {
     // Nouveaux points de montage (underscore) ET anciens (tiret) : le helper
     // peut demonter un legacy, mais n'en cree plus.
     static const QRegularExpression re(
-        QStringLiteral("^/mnt/photos[_-][a-z0-9][a-z0-9._-]*$"));
+        QRegularExpression::anchoredPattern(QStringLiteral("/mnt/photos[_-][a-z0-9][a-z0-9._-]*")));
     return re.match(path).hasMatch();
 }
 
 inline bool isNewConventionMountpoint(const QString& path) {
     static const QRegularExpression re(
-        QStringLiteral("^/mnt/photos_[a-z0-9][a-z0-9._-]*$"));
+        QRegularExpression::anchoredPattern(QStringLiteral("/mnt/photos_[a-z0-9][a-z0-9._-]*")));
     return re.match(path).hasMatch();
 }
 

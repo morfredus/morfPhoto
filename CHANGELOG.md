@@ -3,6 +3,50 @@
 Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/)
 et du [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [0.15.3] - 2026-11-07
+
+### Removed
+
+- Dead service-template leftovers: `ExampleModule`, the `example` module type, the
+  `examples/minimal` demo (which used the template port 8901) and the `POST /example` route.
+
+### Changed
+
+- The no-config fallback now starts an empty `photo` module (no root, database in the
+  state directory) instead of the demo module, so the service stays startable.
+
+## [0.15.2] - 2026-11-07
+
+### Changed
+
+- Removed leftover references to the service skeleton (docs, comments, scripts).
+
+## [0.15.1] - 2026-11-07
+
+### Security
+
+- **Privileged helper**: `mount`, `umount`, `dmesg` and `systemctl` are now run through absolute
+  paths with a minimal imposed environment (`PATH=/usr/sbin:/usr/bin:/sbin:/bin`, `LC_ALL=C`),
+  never the caller's `PATH`. Host, share, slug and mount point checks use anchored patterns, so a
+  trailing newline is no longer accepted.
+- **Credential file** (`.cred`) and `/etc/fstab` / `morfphoto.json` are written atomically
+  (temporary file in the same directory created with its final mode, `fsync`, `rename`). The
+  password is never written to a file with a permissive mode, and `morfphoto.json` is explicitly
+  `0644` whatever the caller's umask. `umount` failures are now checked (mount and unmount) and
+  stop the operation before `/etc/fstab` is touched.
+- **ExifTool**: a file name containing a newline or carriage return is refused (it could inject
+  ExifTool arguments through the stay-open argfile), `--` is inserted before the path, and the
+  `{readyN}` marker is only recognised alone on a line so a crafted file name cannot desynchronise
+  the stream.
+- **CSRF**: write requests (`POST`, `PUT`, `PATCH`, `DELETE`) whose `Origin` differs from `Host` are
+  refused with `403 cross_origin_forbidden`; `Access-Control-Allow-Origin: *` is now sent on `GET`
+  responses only.
+
+### Fixed
+
+- `GET /api/v1/photos`: `(page - 1) * page_size` is computed in 64 bits and `page` is capped, so a
+  huge `page` can no longer overflow.
+
 ## [0.15.0] - 2026-11-02
 
 ### Added

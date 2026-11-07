@@ -25,7 +25,6 @@ class ModuleRegistry;
 //   GET  /healthz       -> { "status": "ok" }
 //   GET  /modules       -> etat de tous les modules
 //   GET  /modules/{id}  -> etat d'un module
-//   POST /example       -> exemple de reception d'un corps JSON (a remplacer)
 // -----------------------------------------------------------------------------
 class HttpServer : public QObject {
     Q_OBJECT
@@ -43,10 +42,10 @@ private:
     void onSocketReadyRead(QTcpSocket* sock);
     void handleRequest(QTcpSocket* sock, const QByteArray& method,
                        const QByteArray& path, const QByteArray& body);
-    QByteArray handleExamplePost(const QByteArray& body, int& code, QByteArray& reason) const;
     QByteArray buildStatusJson() const;
     void reply(QTcpSocket* sock, int code, const QByteArray& reason, const QByteArray& body,
-               const QByteArray& contentType = QByteArrayLiteral("application/json; charset=utf-8"));
+               const QByteArray& contentType = QByteArrayLiteral("application/json; charset=utf-8"),
+               bool allowCors = false);
 
     ServiceConfig   m_config;
     ModuleRegistry* m_registry;

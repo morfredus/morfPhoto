@@ -549,7 +549,12 @@ QJsonObject PhotoRepository::listPhotos(const QVariantMap& filters, int page, in
             total = q.value(0).toInt();
     }
 
-    const int offset = (page - 1) * pageSize;
+    // Borner page et taille avant le produit : (page - 1) * pageSize en int deborde
+    // (comportement indefini) pour une page enorme venue de la requete. Calcul en 64 bits.
+    constexpr int kMaxPage = 1000000;
+    page = qBound(1, page, kMaxPage);
+    pageSize = qMax(1, pageSize);
+    const qint64 offset = static_cast<qint64>(page - 1) * pageSize;
     QVariantList pageBinds = binds;
     pageBinds << pageSize << offset;
     QSqlQuery q(db());

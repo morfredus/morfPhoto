@@ -4,8 +4,8 @@
  * SPDX-License-Identifier: GPL-3.0-only
  *
  * Charge une configuration JSON, demarre les modules, ouvre l'API HTTP et
- * annonce sa presence sur le LAN (morfBeacon). Squelette reutilisable : le
- * comportement propre au service vit dans les modules (voir IModule).
+ * annonce sa presence sur le LAN (morfBeacon). Le comportement propre
+ * au service vit dans les modules (voir IModule).
  */
 
 #include <QCoreApplication>
@@ -27,7 +27,7 @@ using morfphoto::ServiceConfig;
 
 namespace {
 
-// Nom court du service (dossiers /etc, /var/lib, unite systemd). >>> A ADAPTER. <<<
+// Nom court du service (dossiers /etc, /var/lib, unite systemd).
 const QString kServiceName = QStringLiteral("morfphoto");
 
 QTextStream& out() { static QTextStream s(stdout); return s; }
@@ -66,12 +66,13 @@ QString findDefaultConfig() {
     return {};
 }
 
-// Config de repli : un module 'example', pour tester le squelette sans config.
+// Config de repli : le module 'photo' sans parametre (aucune racine, base dans le
+// dossier d'etat), pour que le service demarre et reponde a /status sans config.
 ServiceConfig fallbackConfig() {
     ServiceConfig c;
     morfphoto::ModuleDef ex;
-    ex.type = QStringLiteral("example");
-    ex.id   = QStringLiteral("example-1");
+    ex.type = QStringLiteral("photo");
+    ex.id   = QStringLiteral("photo-1");
     c.modules.push_back(ex);
     return c;
 }
@@ -128,8 +129,8 @@ int main(int argc, char** argv) {
         configPath = findDefaultConfig();
 
     if (configPath.isEmpty()) {
-        err() << "Aucune configuration trouvee : demarrage avec un module 'example'. "
-                 "Fournir --config pour votre configuration.\n";
+        err() << "Aucune configuration trouvee : demarrage avec un module 'photo' sans racine. "
+                 "Fournir --config pour indexer une phototheque.\n";
         config = fallbackConfig();
     } else {
         QString error;

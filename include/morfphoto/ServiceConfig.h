@@ -16,7 +16,7 @@ namespace morfphoto {
 
 // -----------------------------------------------------------------------------
 // ModuleDef : declaration d'UN module a activer (lue depuis la config JSON).
-//   type   : identifiant de fabrique ("example", ...) -> ModuleFactory
+//   type   : identifiant de fabrique ("photo", ...) -> ModuleFactory
 //   id     : identifiant unique dans le service
 //   params : objet JSON libre, propre au type (>>> vos parametres metier <<<)
 // -----------------------------------------------------------------------------
@@ -30,7 +30,7 @@ struct ModuleDef {
 // ServiceConfig : configuration complete du service. Charge depuis un fichier
 // JSON (voir config/morfphoto.example.json).
 //
-// >>> A ADAPTER : ajoutez ici les reglages globaux propres a votre service. <<<
+// Reglages globaux propres au service.
 // -----------------------------------------------------------------------------
 struct ServiceConfig {
     QString appName    = QStringLiteral("morfPhoto");

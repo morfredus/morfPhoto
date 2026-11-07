@@ -6,7 +6,6 @@
 
 #include "morfphoto/ModuleFactory.h"
 #include "morfphoto/IModule.h"
-#include "morfphoto/ExampleModule.h"   // module de demonstration (conserve pour reference)
 #include "morfphoto/PhotoModule.h"     // module metier de morfPhoto
 
 namespace morfphoto {
@@ -23,11 +22,6 @@ namespace ModuleFactory {
 IModule* create(const ModuleDef& def, QString* error, QObject* parent) {
     const QString type = def.type.toLower();
 
-    if (type == QLatin1String("example")) {
-        const int periodMs = def.params.value("period_ms").toInt(5000);
-        return new ExampleModule(def.id, periodMs, parent);
-    }
-
     // Module metier : indexation permanente de la phototheque.
     if (type == QLatin1String("photo")) {
         return new PhotoModule(def.id, def.params, parent);
@@ -39,7 +33,7 @@ IModule* create(const ModuleDef& def, QString* error, QObject* parent) {
 }
 
 QStringList knownTypes() {
-    return { QStringLiteral("example"), QStringLiteral("photo") };
+    return { QStringLiteral("photo") };
 }
 
 } // namespace ModuleFactory

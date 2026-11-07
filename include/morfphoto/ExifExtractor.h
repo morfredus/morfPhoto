@@ -53,6 +53,10 @@ public:
     // testable sans lancer ExifTool (le cœur fragile de la souveraineté des valeurs).
     static ExifData mapTags(const QString& json, QString* error);
 
+    // Position du marqueur « {readyN} » s'il occupe une ligne entiere du flux stay_open,
+    // sinon -1. Public pour le test (un nom de fichier ne doit pas le simuler).
+    static int markerPos(const QByteArray& buf, const QByteArray& marker);
+
 private:
     QString readPersistent(const QString& path, QString* error);
     QString readOnce(const QString& path, QString* error);

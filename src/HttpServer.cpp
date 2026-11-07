@@ -5,6 +5,7 @@
  */
 
 #include "morfphoto/HttpServer.h"
+#include "morfphoto/OriginCheck.h"
 #include "morfphoto/ModuleRegistry.h"
 #include "morfphoto/SelfDescription.h"
 #include "morfphoto/Version.h"
@@ -115,6 +116,15 @@ void HttpServer::onSocketReadyRead(QTcpSocket* sock) {
     const int lineEnd = buf.indexOf("\r\n");
     const QList<QByteArray> parts = buf.left(lineEnd).split(' ');
     const QByteArray method = parts.value(0);
+
+    // Anti-CSRF : une ecriture portant un Origin different de Host vient d'une page tierce.
+    if (isCrossOriginWrite(method, headerValue(headerBlock, "Origin"),
+                           headerValue(headerBlock, "Host"))) {
+        sock->setProperty("buf", QByteArray());
+        reply(sock, 403, reasonFor(403), "{\"error\":\"cross_origin_forbidden\"}",
+              QByteArrayLiteral("application/json; charset=utf-8"), false);
+        return;
+    }
     const QByteArray path   = parts.value(1);
     const QByteArray body   = buf.mid(bodyStart, needed);
 
@@ -136,21 +146,12 @@ void HttpServer::handleRequest(QTcpSocket* sock, const QByteArray& method,
         IModule* mod = m_registry ? m_registry->firstOfType(QStringLiteral("photo")) : nullptr;
         PhotoApi api(qobject_cast<PhotoModule*>(mod));
         const PhotoApi::Result r = api.handle(method, QString::fromUtf8(path), queryString, body);
-        reply(sock, r.code, reasonFor(r.code), r.body, r.contentType);
+        reply(sock, r.code, reasonFor(r.code), r.body, r.contentType, method == "GET");
         return;
     }
 
-    // ---- Exemple de route POST (a remplacer par vos endpoints metier) ----
-    if (path == "/example") {
-        if (method != "POST") {
-            code = 405; reason = "Method Not Allowed";
-            out = "{\"error\":\"use POST /example\"}";
-        } else {
-            out = handleExamplePost(body, code, reason);
-        }
-    }
     // ---- Routes GET ------------------------------------------------------
-    else if (method != "GET") {
+    if (method != "GET") {
         code = 405; reason = "Method Not Allowed";
         out = "{\"error\":\"method not allowed\"}";
     } else if (path == "/healthz") {
@@ -174,21 +175,8 @@ void HttpServer::handleRequest(QTcpSocket* sock, const QByteArray& method,
         out = "{\"error\":\"not found\"}";
     }
 
-    reply(sock, code, reason, out);
-}
-
-QByteArray HttpServer::handleExamplePost(const QByteArray& body, int& code, QByteArray& reason) const {
-    // >>> EXEMPLE : parse un corps JSON et repond. A remplacer par votre metier.
-    QJsonParseError pe{};
-    const QJsonDocument doc = QJsonDocument::fromJson(body, &pe);
-    if (pe.error != QJsonParseError::NoError || !doc.isObject()) {
-        code = 400; reason = "Bad Request";
-        return "{\"error\":\"corps JSON invalide\"}";
-    }
-    QJsonObject o;
-    o["received"] = doc.object();
-    o["ts"]       = static_cast<double>(QDateTime::currentSecsSinceEpoch());
-    return toJson(o);
+    reply(sock, code, reason, out, QByteArrayLiteral("application/json; charset=utf-8"),
+          method == "GET");
 }
 
 QByteArray HttpServer::buildStatusJson() const {
@@ -209,9 +197,9 @@ QByteArray HttpServer::buildStatusJson() const {
     if (!activity.isEmpty())
         o["activity"] = activity;
 
-    // Detail annonce (API) depuis le point UNIQUE. MODELE : tout service
+    // Detail annonce (API) depuis le point UNIQUE. Tout service
     // morfSystem se decrit ainsi. describeService n'emet `web_ui` que si une
-    // interface est declaree dans fillAnnouncedDetail ; ce squelette etant
+    // interface est declaree dans fillAnnouncedDetail ; morfPhoto etant
     // sans interface, seul le bloc `api` apparait.
     morfbeacon::PresenceConfig self;
     fillAnnouncedDetail(self);
@@ -223,12 +211,14 @@ QByteArray HttpServer::buildStatusJson() const {
 }
 
 void HttpServer::reply(QTcpSocket* sock, int code, const QByteArray& reason, const QByteArray& body,
-                       const QByteArray& contentType) {
+                       const QByteArray& contentType, bool allowCors) {
     QByteArray resp;
     resp += "HTTP/1.1 " + QByteArray::number(code) + " " + reason + "\r\n";
     resp += "Content-Type: " + contentType + "\r\n";
     resp += "Content-Length: " + QByteArray::number(body.size()) + "\r\n";
-    resp += "Access-Control-Allow-Origin: *\r\n";
+    // CORS ouvert en lecture seule uniquement : jamais sur une ecriture (CSRF).
+    if (allowCors)
+        resp += "Access-Control-Allow-Origin: *\r\n";
     resp += "Connection: close\r\n\r\n";
     resp += body;
     sock->write(resp);
