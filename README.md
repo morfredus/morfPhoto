@@ -2,7 +2,7 @@
 
 *Read in another language: **English** (this document) · [Français](README.fr.md).*
 
-[![Version](https://img.shields.io/badge/version-0.15.5-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.15.6-blue)](CHANGELOG.md)
 ![C++](https://img.shields.io/badge/C%2B%2B-17-00599C?logo=cplusplus)
 ![Qt](https://img.shields.io/badge/Qt-6-41CD52?logo=qt)
 ![Build](https://img.shields.io/badge/CMake-3.21+-064F8C?logo=cmake)
@@ -87,7 +87,9 @@ always stay inside them.
 
 ## Build
 
-Needs **Qt 6** (Core, Network, Sql, Concurrent) and, at runtime, **ExifTool**.
+Needs **Qt 6** (Core, Network, Sql, Concurrent) and, at runtime, **ExifTool** and the **Qt SQLite
+driver** (`libqt6sql6-sqlite` on Debian: the `.deb` pulls it in, a source install needs it by hand;
+without it the index fails with "Driver not loaded").
 morfBeacon is vendored under `third_party/morf/beacon`.
 
 **ExifTool is a required runtime dependency**, and `service.py` does not install it

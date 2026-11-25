@@ -2,7 +2,7 @@
 
 *Lire dans une autre langue : [English](README.md) · **Français** (ce document).*
 
-[![Version](https://img.shields.io/badge/version-0.15.5-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.15.6-blue)](CHANGELOG.md)
 ![C++](https://img.shields.io/badge/C%2B%2B-17-00599C?logo=cplusplus)
 ![Qt](https://img.shields.io/badge/Qt-6-41CD52?logo=qt)
 ![Build](https://img.shields.io/badge/CMake-3.21+-064F8C?logo=cmake)
@@ -90,7 +90,9 @@ gérées par l'API restent toujours à l'intérieur.
 
 ## Compiler
 
-Nécessite **Qt 6** (Core, Network, Sql, Concurrent) et, à l'exécution, **ExifTool**.
+Nécessite **Qt 6** (Core, Network, Sql, Concurrent) et, à l'exécution, **ExifTool** et le
+**pilote SQLite de Qt** (`libqt6sql6-sqlite` sous Debian : le `.deb` l'installe, une installation
+depuis les sources l'exige à la main ; sans lui l'index échoue avec « Driver not loaded »).
 morfBeacon est vendoré dans `third_party/morf/beacon`.
 
 **ExifTool est une dépendance d'exécution obligatoire**, et `service.py` ne
