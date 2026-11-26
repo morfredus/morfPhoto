@@ -94,6 +94,7 @@ jobs:
             mingw-w64-ucrt-x86_64-qt6-base
             mingw-w64-ucrt-x86_64-qt6-tools
             mingw-w64-ucrt-x86_64-python
+            git
             diffutils
 
       - name: Build and test (preset mingw)
@@ -116,6 +117,9 @@ jobs:
         shell: msys2 {0}
         run: |
           export QT_ROOT="$(cygpath -m /ucrt64)"
+          # The checkout belongs to another user for MSYS2's git: allow it, or the provenance
+          # (git status) cannot be read and the packaging refuses to build.
+          git config --global --add safe.directory '*'
           python3 service.py package --target windows-x86_64-zip --out dist
 
       - uses: actions/upload-artifact@v4
