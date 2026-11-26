@@ -4,9 +4,9 @@
   "packaging": {
     "provider": "morfdeploy",
     "targets": {
-      "linux-amd64-deb":    { "platform": { "os": "linux", "arch": "x86_64" }, "build": { "preset": "linux" },       "package": { "format": "deb", "architecture": "amd64" } },
-      "linux-arm64-deb":    { "platform": { "os": "linux", "arch": "arm64" },  "build": { "preset": "linux-arm64" }, "package": { "format": "deb", "architecture": "arm64" } },
-      "windows-x86_64-zip": { "platform": { "os": "windows", "arch": "x86_64" }, "build": { "preset": "mingw" },     "package": { "format": "zip" } }
+      "linux-amd64-deb":    { "platform": { "os": "linux", "arch": "x86_64" }, "build": { "preset": "linux" },       "package": { "format": "deb", "architecture": "amd64", "ci": { "workflow": "packages.yml", "artifact": "morfphoto-deb-amd64", "file": "morfphoto-{version}-linux-amd64.deb" } } },
+      "linux-arm64-deb":    { "platform": { "os": "linux", "arch": "arm64" },  "build": { "preset": "linux-arm64" }, "package": { "format": "deb", "architecture": "arm64", "ci": { "workflow": "packages.yml", "artifact": "morfphoto-deb-arm64", "file": "morfphoto-{version}-linux-arm64.deb" } } },
+      "windows-x86_64-zip": { "platform": { "os": "windows", "arch": "x86_64" }, "build": { "preset": "mingw" },     "package": { "format": "zip", "ci": { "workflow": "packages.yml", "artifact": "morfphoto-windows", "file": "morfphoto-{version}-windows-x86_64.zip" } } }
     }
   }
 }
