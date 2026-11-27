@@ -10,6 +10,7 @@
 #include "morfphoto/PhotoScanner.h"
 #include "morfphoto/ContextFile.h"
 #include "morfphoto/Paths.h"
+#include "morfphoto/ThumbnailCache.h"
 
 #include <QTimer>
 #include <QtConcurrent>
@@ -66,6 +67,33 @@ PhotoModule::PhotoModule(const QString& id, const QJsonObject& params, QObject* 
     const QJsonObject exif = params.value(QStringLiteral("exiftool")).toObject();
     m_exiftoolBinary = exif.value(QStringLiteral("binary")).toString(QStringLiteral("exiftool"));
     m_stayOpen       = exif.value(QStringLiteral("stay_open")).toBool(true);
+
+    // Bibliotheque : fournisseurs de sidecars, dans l'ordre de priorite. Un nom inconnu
+    // est ignore (et signale), un doublon aussi : mieux vaut une config tolerante qu'un
+    // service qui ne demarre pas pour une faute de frappe.
+    const QJsonObject sidecars = params.value(QStringLiteral("sidecars")).toObject();
+    for (const QJsonValue& v : sidecars.value(QStringLiteral("providers")).toArray()) {
+        const QString id = v.toString().trimmed().toLower();
+        if (knownProviders().contains(id) && !m_libraryProviders.contains(id))
+            m_libraryProviders << id;
+        else
+            qWarning() << "morfPhoto: fournisseur de sidecars inconnu ou repete, ignore :" << id;
+    }
+
+    // Cache des vignettes de grille. Actif par defaut : c'est un simple cache
+    // reconstructible, range dans la zone `cache/` de l'etat du service. `cache_dir`
+    // vide = <etat>/cache/thumbnails ; `max_mb` plafonne sa taille (0 = sans plafond) ;
+    // `min_free_mb` arrete les ecritures quand le disque se remplit.
+    const QJsonObject thumbs = params.value(QStringLiteral("thumbnails")).toObject();
+    if (thumbs.value(QStringLiteral("cache")).toBool(true)) {
+        QString dir = thumbs.value(QStringLiteral("cache_dir")).toString();
+        if (dir.isEmpty())
+            dir = Paths::stateDir(QStringLiteral("morfphoto")) + QStringLiteral("/cache/thumbnails");
+        const qint64 maxMb  = thumbs.value(QStringLiteral("max_mb")).toInt(512);
+        const qint64 freeMb = thumbs.value(QStringLiteral("min_free_mb")).toInt(512);
+        m_thumbCache = std::make_unique<ThumbnailCache>(dir, maxMb * 1024 * 1024,
+                                                        freeMb * 1024 * 1024);
+    }
 }
 
 PhotoModule::~PhotoModule() {
@@ -74,6 +102,7 @@ PhotoModule::~PhotoModule() {
 }
 
 bool PhotoModule::start() {
+    m_revisionEpoch = QDateTime::currentMSecsSinceEpoch();
     m_readRepo = new PhotoRepository(QStringLiteral("morfphoto:read"));
     if (!m_readRepo->open(m_dbPath)) {
         const QString e = m_readRepo->openError();
@@ -83,6 +112,11 @@ bool PhotoModule::start() {
         m_lastError = QStringLiteral("db: ") + e;   // visible via /modules et /api/v1/index/status
         return false;
     }
+
+    // Bibliotheque eteinte : ce qu'une activation precedente a laisse n'a plus lieu d'etre
+    // (la desactiver retire ses valeurs, sans toucher a l'EXIF).
+    if (!libraryEnabled())
+        m_readRepo->clearLibrary();
 
     // Sources SMB poussées par PhotoHub : leurs points de montage sont des racines
     // autorisées au même titre que celles de la config. Les charger AVANT la
@@ -201,8 +235,10 @@ void PhotoModule::doPass(IndexMode mode, QVector<int> folderIds, QString trigger
         PhotoRepository repo(QStringLiteral("morfphoto:index:%1").arg(pass));
         if (repo.open(m_dbPath)) {
             ExifExtractor extractor(m_exiftoolBinary, m_stayOpen);
+            extractor.setLibraryTags(libraryEnabled());   // XMP embarque pour le fournisseur « file »
             extractor.open();
             Indexer indexer(&repo, &extractor, roots, m_probeTimeoutMs);
+            indexer.setLibraryProviders(m_libraryProviders);
             // Relais de progression : l'Indexer rappelle depuis CE thread ; on recopie
             // sous verrou dans les membres lus par observableState() (thread HTTP).
             indexer.setProgressCallback([this](const IndexProgress& p) {
@@ -230,6 +266,7 @@ void PhotoModule::doPass(IndexMode mode, QVector<int> folderIds, QString trigger
         QMutexLocker lock(&m_stateMutex);
         m_indexing = false;
         m_lastError = error;
+        bumpCatalogRevision();   // la passe a pu changer ce que l'API renvoie : invalider les ETag
         m_lastFoldersTotal = m_progFoldersTotal;
         startEpoch   = m_startedAtEpoch;
         filesSeen    = m_progFilesSeen;
@@ -300,6 +337,10 @@ QJsonObject PhotoModule::observableState() const {
     exif["detail"]    = m_exiftoolDetail.isEmpty() ? QJsonValue(QJsonValue::Null)
                                                    : QJsonValue(m_exiftoolDetail);
     o["exiftool"] = exif;
+
+    // Cache des vignettes : de quoi voir s'il sert (succes/echecs) ou s'il est plein.
+    o["thumbnails"] = m_thumbCache ? m_thumbCache->stats()
+                                   : QJsonObject{{QStringLiteral("enabled"), false}};
 
     // last_error : priorité à l'erreur de la dernière passe ; à défaut, un ExifTool
     // introuvable est une cause d'échec permanente qui mérite ce champ (sinon
@@ -420,6 +461,20 @@ QJsonObject PhotoModule::indexStatus() const {
     } else {
         o["last_run"] = QJsonValue(QJsonValue::Null);
     }
+    // Bibliotheque (contrat morfphoto-library/1, §6) : de quoi savoir si elle est active,
+    // avec quels fournisseurs, et ce qu'elle a trouve.
+    QJsonObject library{{"enabled", libraryEnabled()}, {"proto", "morfphoto-library/1"}};
+    if (libraryEnabled() && m_readRepo) {
+        QJsonArray providers;
+        for (const QString& p : m_libraryProviders)
+            providers.append(p);
+        providers.append(embeddedProviderId());
+        library["providers"] = providers;
+        const QJsonObject st = m_readRepo->libraryStatus();
+        library["photos_with_sidecar"] = st.value("photos_with_sidecar");
+        library["by_source"] = st.value("by_source");
+    }
+    o["library"] = library;
     return o;
 }
 
@@ -460,7 +515,45 @@ QJsonArray PhotoModule::cameras() const { return m_readRepo ? m_readRepo->distin
 QJsonArray PhotoModule::lenses()  const { return m_readRepo ? m_readRepo->distinctLenses()  : QJsonArray{}; }
 QJsonArray PhotoModule::focals()  const { return m_readRepo ? m_readRepo->distinctFocals()  : QJsonArray{}; }
 QJsonArray PhotoModule::years()   const { return m_readRepo ? m_readRepo->years()           : QJsonArray{}; }
-QJsonObject PhotoModule::photoDataset() const { return m_readRepo ? m_readRepo->photoDataset() : QJsonObject{}; }
+QJsonObject PhotoModule::photoDataset(bool withLibrary, bool withGps) const {
+    // Sans bibliotheque active, `with=library` est ignore : la reponse reste celle d'avant.
+    return m_readRepo ? m_readRepo->photoDataset(withLibrary && libraryEnabled(), withGps) : QJsonObject{};
+}
+
+// --- Bibliotheque -------------------------------------------------------------
+
+QJsonObject PhotoModule::libraryPhoto(int fileId, bool* found) const {
+    if (!m_readRepo) { if (found) *found = false; return {}; }
+    return m_readRepo->libraryPhoto(fileId, found);
+}
+QJsonArray PhotoModule::libraryPhotos(const QVector<int>& ids) const {
+    return m_readRepo ? m_readRepo->libraryPhotos(ids) : QJsonArray{};
+}
+QJsonObject PhotoModule::libraryList(const LibraryFilter& f, int page, int pageSize, bool skipTotal,
+                                     const QString& cursor, bool* cursorValid) const {
+    if (cursorValid) *cursorValid = true;
+    return m_readRepo ? m_readRepo->libraryList(f, page, pageSize, skipTotal, cursor, cursorValid) : QJsonObject{};
+}
+
+QString PhotoModule::catalogRevision() const {
+    return QString::number(m_revisionEpoch, 36) + QLatin1Char('.')
+         + QString::number(m_revisionCounter.load(std::memory_order_relaxed), 36);
+}
+QJsonObject PhotoModule::libraryFacets(const LibraryFilter& f) const {
+    return m_readRepo ? m_readRepo->libraryFacets(f) : QJsonObject{};
+}
+QJsonObject PhotoModule::librarySubfolders(const QString& folder) const {
+    return m_readRepo ? m_readRepo->librarySubfolders(folder) : QJsonObject{};
+}
+QJsonObject PhotoModule::librarySidecars() const {
+    QJsonObject o = m_readRepo ? m_readRepo->librarySidecars() : QJsonObject{};
+    QJsonArray providers;
+    for (const QString& p : m_libraryProviders)
+        providers.append(p);
+    providers.append(embeddedProviderId());
+    o["providers"] = providers;
+    return o;
+}
 
 // --- Contexte photographique (morfphoto-context/2) --------------------------
 
@@ -558,11 +651,45 @@ QByteArray PhotoModule::thumbnail(const QString& path, bool* ok) const {
     const QFileInfo fi(path);
     if (!fi.exists() || !fi.isFile())
         return {};
+
+    // Cache d'abord : la cle suit la taille et la date du fichier, donc une photo
+    // retouchee ou remplacee n'est jamais servie depuis une vignette perimee.
+    QString cacheKey;
+    if (m_thumbCache) {
+        cacheKey = ThumbnailCache::key(fi.absoluteFilePath(), fi.size(),
+                                       fi.lastModified().toSecsSinceEpoch());
+        const QByteArray cached = m_thumbCache->load(cacheKey);
+        if (!cached.isEmpty()) {
+            if (ok) *ok = true;
+            return cached;
+        }
+    }
+
+    auto finish = [&](const QByteArray& jpeg) -> QByteArray {
+        if (jpeg.isEmpty())
+            return {};
+        if (m_thumbCache)
+            m_thumbCache->store(cacheKey, jpeg);
+        if (ok) *ok = true;
+        return jpeg;
+    };
+
+    // JPEG pleine taille : reduit directement, sans exiftool (bien plus rapide, et la
+    // vignette est un vrai apercu de la photo, pas la miniature de 160 px de l'appareil).
+    const QString ext = fi.suffix().toLower();
+    if (ext == QLatin1String("jpg") || ext == QLatin1String("jpeg")) {
+        const QByteArray direct = gridThumbnailFromFile(fi.absoluteFilePath());
+        if (!direct.isEmpty())
+            return finish(direct);
+        // Fichier illisible par Qt (JPEG atypique) : on retombe sur l'apercu embarque.
+    }
+
     if (!m_exiftoolReady)
         return {};   // sans exiftool, pas d'extraction possible
 
-    // Apercu JPEG embarque : ThumbnailImage (petit, rapide, present sur JPEG comme RAW),
-    // repli PreviewImage (plus grand, surtout sur les RAW). Process one-off borne.
+    // Apercu JPEG embarque : PreviewImage d'abord (assez grand pour une grille de 400 px,
+    // surtout sur les RAW), repli ThumbnailImage (petit mais present partout). Process
+    // one-off borne. Le resultat est ramene a la grille avant d'etre servi.
     auto extract = [this](const QString& tag, const QString& p) -> QByteArray {
         QProcess proc;
         proc.start(m_exiftoolBinary, {QStringLiteral("-b"), tag, p});
@@ -576,13 +703,10 @@ QByteArray PhotoModule::thumbnail(const QString& path, bool* ok) const {
         return proc.readAllStandardOutput();
     };
 
-    QByteArray jpeg = extract(QStringLiteral("-ThumbnailImage"), path);
+    QByteArray jpeg = gridThumbnailFromBytes(extract(QStringLiteral("-PreviewImage"), path));
     if (jpeg.isEmpty())
-        jpeg = extract(QStringLiteral("-PreviewImage"), path);
-    if (jpeg.isEmpty())
-        return {};
-    if (ok) *ok = true;
-    return jpeg;
+        jpeg = gridThumbnailFromBytes(extract(QStringLiteral("-ThumbnailImage"), path));
+    return finish(jpeg);
 }
 
 bool PhotoModule::deleteContext(const QString& directory, QJsonObject* out, QString* error) {

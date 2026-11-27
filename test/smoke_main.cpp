@@ -15,6 +15,7 @@
 
 #include <QCoreApplication>
 #include <QDir>
+#include <QDirIterator>
 #include <QFile>
 #include <QDateTime>
 #include <QJsonObject>
@@ -28,6 +29,11 @@
 #include "morfphoto/ContextFile.h"
 #include "morfphoto/SmbSourceNaming.h"
 #include "morfphoto/OriginCheck.h"
+#include "morfphoto/ApiAuth.h"
+#include "morfphoto/ThumbnailCache.h"
+
+#include <QBuffer>
+#include <QImage>
 
 using namespace morfphoto;
 
@@ -501,6 +507,72 @@ int main(int argc, char** argv) {
     CHECK(isCrossOriginWrite("POST", "http://evil.example", "pi:8791"), "origine tierce: refus");
     CHECK(isCrossOriginWrite("DELETE", "null", "pi:8791"), "Origin null: refus");
     CHECK(!isCrossOriginWrite("GET", "http://evil.example", "pi:8791"), "GET jamais bloque");
+
+
+    // --- Vignettes de grille (400 px) et cache disque ---
+    {
+        const QString tdir = base + QStringLiteral("/thumbs");
+        QDir().mkpath(tdir);
+        QImage big(1000, 500, QImage::Format_RGB32);
+        big.fill(Qt::darkGreen);
+        const QString bigPath = tdir + QStringLiteral("/big.jpg");
+        CHECK(big.save(bigPath, "jpeg"), "JPEG de test ecrit (plugin JPEG disponible)");
+
+        const QByteArray fromFile = gridThumbnailFromFile(bigPath);
+        QImage out = QImage::fromData(fromFile, "jpeg");
+        CHECK(!out.isNull() && qMax(out.width(), out.height()) == kThumbnailEdge,
+              "JPEG pleine taille reduit a 400 px sur le grand cote");
+        CHECK(out.width() == 400 && out.height() == 200, "proportions conservees");
+
+        QImage small(120, 80, QImage::Format_RGB32);
+        small.fill(Qt::blue);
+        QByteArray smallJpeg;
+        { QBuffer b(&smallJpeg); b.open(QIODevice::WriteOnly); small.save(&b, "jpeg"); }
+        CHECK(gridThumbnailFromBytes(smallJpeg) == smallJpeg, "petit JPEG rendu tel quel (pas de recompression)");
+
+        QByteArray bigJpeg;
+        { QBuffer b(&bigJpeg); b.open(QIODevice::WriteOnly); big.save(&b, "jpeg"); }
+        const QImage fromBytes = QImage::fromData(gridThumbnailFromBytes(bigJpeg), "jpeg");
+        CHECK(qMax(fromBytes.width(), fromBytes.height()) == kThumbnailEdge, "apercu embarque grand ramene a 400 px");
+        CHECK(gridThumbnailFromBytes(QByteArray("pas une image")).isEmpty(), "octets illisibles: vide");
+        CHECK(gridThumbnailFromFile(tdir + QStringLiteral("/absent.jpg")).isEmpty(), "fichier absent: vide");
+
+        // Cle : stable pour un meme fichier, differente des qu'il change.
+        const QString k1 = ThumbnailCache::key(QStringLiteral("/p/a.jpg"), 100, 5);
+        CHECK(k1 == ThumbnailCache::key(QStringLiteral("/p/a.jpg"), 100, 5), "cle stable");
+        CHECK(k1 != ThumbnailCache::key(QStringLiteral("/p/a.jpg"), 101, 5), "cle change avec la taille");
+        CHECK(k1 != ThumbnailCache::key(QStringLiteral("/p/a.jpg"), 100, 6), "cle change avec la date");
+
+        // Cache : aller-retour, echec, plafond.
+        ThumbnailCache cache(tdir + QStringLiteral("/cache"), 0, 0);
+        CHECK(cache.load(k1).isEmpty(), "cache: echec avant ecriture");
+        CHECK(cache.store(k1, fromFile) && cache.load(k1) == fromFile, "cache: aller-retour identique");
+        CHECK(cache.stats().value(QStringLiteral("hits")).toInt() == 1
+              && cache.stats().value(QStringLiteral("misses")).toInt() == 1, "cache: compteurs succes/echecs");
+
+        ThumbnailCache capped(tdir + QStringLiteral("/capped"), fromFile.size() * 3, 0);
+        for (int i = 0; i < 10; ++i)
+            capped.store(ThumbnailCache::key(QStringLiteral("/p/%1.jpg").arg(i), 1, i), fromFile);
+        capped.trim();
+        int left = 0;
+        QDirIterator it(tdir + QStringLiteral("/capped"), {QStringLiteral("*.jpg")}, QDir::Files,
+                        QDirIterator::Subdirectories);
+        while (it.hasNext()) { it.next(); ++left; }
+        CHECK(left > 0 && left <= 3, "cache: le plafond de taille retire les plus anciennes vignettes");
+    }
+
+    // --- Cle d'API optionnelle ---
+    CHECK(isApiPath("/api/v1/photos"), "/api/ est une route protegee");
+    CHECK(!isApiPath("/status") && !isApiPath("/healthz") && !isApiPath("/modules"),
+          "/status, /healthz et /modules restent ouverts");
+    CHECK(isAuthorized("", ""), "sans cle configuree: tout passe");
+    CHECK(isAuthorized("Bearer nimporte", ""), "sans cle configuree: meme un en-tete quelconque passe");
+    CHECK(isAuthorized("Bearer secret", "secret"), "bonne cle acceptee");
+    CHECK(isAuthorized("bearer   secret  ", "secret"), "schema insensible a la casse, espaces tolerés");
+    CHECK(!isAuthorized("Bearer secrex", "secret"), "mauvaise cle refusee");
+    CHECK(!isAuthorized("Bearer secre", "secret"), "cle trop courte refusee");
+    CHECK(!isAuthorized("", "secret"), "en-tete absent refuse");
+    CHECK(!isAuthorized("Basic c2VjcmV0", "secret"), "autre schema refuse");
 
     repo2.close();
     QDir(base).removeRecursively();

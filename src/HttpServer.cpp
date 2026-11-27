@@ -10,6 +10,7 @@
 #include "morfphoto/SelfDescription.h"
 #include "morfphoto/Version.h"
 #include "morfphoto/PhotoApi.h"
+#include "morfphoto/ApiAuth.h"
 #include "morfphoto/PhotoModule.h"
 
 #include <QTcpServer>
@@ -50,6 +51,8 @@ QByteArray reasonFor(int code) {
         case 201: return "Created";
         case 202: return "Accepted";
         case 400: return "Bad Request";
+        case 401: return "Unauthorized";
+        case 304: return "Not Modified";
         case 403: return "Forbidden";
         case 404: return "Not Found";
         case 405: return "Method Not Allowed";
@@ -66,6 +69,10 @@ HttpServer::HttpServer(ServiceConfig config, ModuleRegistry* registry, QObject* 
       m_config(std::move(config)),
       m_registry(registry),
       m_server(new QTcpServer(this)) {
+    // La variable d'environnement l'emporte sur le fichier : un conteneur ou un service
+    // systemd peut fournir la cle sans l'ecrire dans la configuration.
+    const QByteArray envKey = qgetenv("MORFPHOTO_API_KEY").trimmed();
+    m_apiKey = envKey.isEmpty() ? m_config.apiKey.toUtf8() : envKey;
     connect(m_server, &QTcpServer::newConnection, this, &HttpServer::onNewConnection);
 }
 
@@ -129,11 +136,13 @@ void HttpServer::onSocketReadyRead(QTcpSocket* sock) {
     const QByteArray body   = buf.mid(bodyStart, needed);
 
     sock->setProperty("buf", QByteArray());
-    handleRequest(sock, method, path, body);
+    handleRequest(sock, method, path, body, headerValue(headerBlock, "Authorization"),
+                  headerValue(headerBlock, "If-None-Match"));
 }
 
 void HttpServer::handleRequest(QTcpSocket* sock, const QByteArray& method,
-                               const QByteArray& rawPath, const QByteArray& body) {
+                               const QByteArray& rawPath, const QByteArray& body,
+                               const QByteArray& authorization, const QByteArray& ifNoneMatch) {
     const int qpos = rawPath.indexOf('?');
     const QByteArray path = qpos < 0 ? rawPath : rawPath.left(qpos);
     const QString queryString = qpos < 0 ? QString() : QString::fromUtf8(rawPath.mid(qpos + 1));
@@ -142,11 +151,17 @@ void HttpServer::handleRequest(QTcpSocket* sock, const QByteArray& method,
     QByteArray out;
 
     // ---- API metier /api/v1 : deleguee au domaine photo (PhotoApi) ----
-    if (path.startsWith("/api/")) {
+    if (isApiPath(path)) {
+        // Cle d'API optionnelle : refus AVANT toute lecture du domaine photo.
+        if (!isAuthorized(authorization, m_apiKey)) {
+            reply(sock, 401, reasonFor(401), "{\"error\":\"unauthorized\",\"detail\":\"cle d'API requise (Authorization: Bearer)\"}",
+                  QByteArrayLiteral("application/json; charset=utf-8"), false);
+            return;
+        }
         IModule* mod = m_registry ? m_registry->firstOfType(QStringLiteral("photo")) : nullptr;
         PhotoApi api(qobject_cast<PhotoModule*>(mod));
-        const PhotoApi::Result r = api.handle(method, QString::fromUtf8(path), queryString, body);
-        reply(sock, r.code, reasonFor(r.code), r.body, r.contentType, method == "GET");
+        const PhotoApi::Result r = api.handle(method, QString::fromUtf8(path), queryString, body, ifNoneMatch);
+        reply(sock, r.code, reasonFor(r.code), r.body, r.contentType, method == "GET", r.etag);
         return;
     }
 
@@ -189,6 +204,9 @@ QByteArray HttpServer::buildStatusJson() const {
     o["uptime_s"] = static_cast<double>(m_uptime.isValid() ? m_uptime.elapsed() / 1000 : 0);
     o["ts"]       = static_cast<double>(QDateTime::currentSecsSinceEpoch());
     o["metrics"]  = m_registry ? m_registry->metrics() : QJsonObject{};
+    // Dit seulement SI une cle est exigee, jamais laquelle : un client sait ainsi
+    // pourquoi il recoit 401 sans que /status (ouvert) ne revele rien de sensible.
+    o["api_key_required"] = !m_apiKey.isEmpty();
 
     // Activite EN COURS (contrat generique `activity/1`) : champ OPTIONNEL, present
     // seulement quand un module travaille. morfMonitor le lit en temps reel. Jamais
@@ -211,11 +229,15 @@ QByteArray HttpServer::buildStatusJson() const {
 }
 
 void HttpServer::reply(QTcpSocket* sock, int code, const QByteArray& reason, const QByteArray& body,
-                       const QByteArray& contentType, bool allowCors) {
+                       const QByteArray& contentType, bool allowCors, const QByteArray& etag) {
     QByteArray resp;
     resp += "HTTP/1.1 " + QByteArray::number(code) + " " + reason + "\r\n";
-    resp += "Content-Type: " + contentType + "\r\n";
+    if (code != 304)
+        resp += "Content-Type: " + contentType + "\r\n";
     resp += "Content-Length: " + QByteArray::number(body.size()) + "\r\n";
+    // Validateur de cache : `no-cache` = toujours revalider, jamais servir sans demander.
+    if (!etag.isEmpty())
+        resp += "ETag: " + etag + "\r\nCache-Control: no-cache\r\n";
     // CORS ouvert en lecture seule uniquement : jamais sur une ecriture (CSRF).
     if (allowCors)
         resp += "Access-Control-Allow-Origin: *\r\n";

@@ -42,6 +42,11 @@ struct ServiceConfig {
     quint16 httpPort    = 8793;                      // 0 => pas de serveur HTTP
     QString bindAddress = QStringLiteral("0.0.0.0");
 
+    // Cle d'API optionnelle exigee sur /api/ (Authorization: Bearer). Vide = pas
+    // d'authentification. La variable d'environnement MORFPHOTO_API_KEY l'emporte
+    // (voir HttpServer) : la cle peut ainsi vivre hors du fichier de configuration.
+    QString apiKey;
+
     // Annonce de presence sur le LAN via morfBeacon.
     bool    beaconEnabled    = true;
     quint16 beaconUdpPort    = 45454;                // port du parc morfSystem
@@ -56,6 +61,7 @@ struct ServiceConfig {
         if (root.contains("instance_id"))  c.instanceId  = root.value("instance_id").toString();
         if (root.contains("http_port"))    c.httpPort    = static_cast<quint16>(root.value("http_port").toInt(c.httpPort));
         if (root.contains("bind_address")) c.bindAddress = root.value("bind_address").toString(c.bindAddress);
+        if (root.contains("api_key"))      c.apiKey      = root.value("api_key").toString().trimmed();
 
         const QJsonObject beacon = root.value("beacon").toObject();
         if (beacon.contains("enabled"))     c.beaconEnabled    = beacon.value("enabled").toBool(c.beaconEnabled);

@@ -11,6 +11,7 @@
 #include <QSet>
 #include <QHash>
 #include <QJsonObject>
+#include "morfphoto/PhotoScanner.h"
 #include <QMutex>
 
 #include <functional>
@@ -76,6 +77,10 @@ public:
     // déjà. `folderIds` vide = tous les dossiers actifs. `trigger` : watch|api|cli.
     int run(IndexMode mode, const QVector<int>& folderIds, const QString& trigger);
 
+    // Bibliotheque (contrat morfphoto-library/1) : fournisseurs de sidecars, par ordre de
+    // priorite. Vide (defaut) = bibliotheque eteinte, la passe est celle d'avant.
+    void setLibraryProviders(QStringList providers) { m_libraryProviders = std::move(providers); }
+
     // État observable : { state: idle|indexing, started_at, last_error }.
     QJsonObject state() const;
 
@@ -94,6 +99,23 @@ private:
                          RunCounts& counts, QSet<QString>& unavailableRoots);
     bool extract(int runId, const QString& path, RunCounts& counts, ExifData& out);
 
+    // Bibliotheque : relit les sidecars des photos d'une selection dont l'empreinte a
+    // change (ou que la passe vient de re-extraire), puis ecrit le resultat fusionne.
+    // Appelee seulement apres un scan complet et une racine disponible. Un fichier dont
+    // la liste de sidecars n'a pas bouge n'est PAS rouvert : une passe sans changement
+    // ne coute ni lecture ni ecriture.
+    // Garde de perimetre d'un fichier du scan. Resoudre le vrai chemin d'un fichier (liens,
+    // casse, `..`) coute des appels au systeme de fichiers : mesure a 0,8 ms par appel, soit
+    // 5 s sur 3 000 photos pour une passe qui ne change rien. Pour un fichier ordinaire, sa
+    // place est celle de son dossier : on resout le DOSSIER une fois (`cache`) au lieu de
+    // chaque fichier. Un lien, lui, est toujours resolu individuellement, car il peut pointer
+    // hors de la racine.
+    bool fileWithinRoots(const FileInfo& info, QHash<QString, bool>& cache) const;
+    void refreshLibrary(const FolderRow& folder, const ScanResult& scan,
+                        const QSet<QString>& touched, int runId);
+    void readLibraryFile(int fileId, const QString& fingerprint,
+                         const QVector<SidecarRef>& refs, int runId);
+
     // Découverte du CONTEXTE (morfphoto-context/2) pour les répertoires scannés d'une
     // sélection. Appelée UNIQUEMENT après un scan complet et racine disponible (jamais
     // sur source muette ou support éjecté : on n'efface pas un contexte à tort). Lit
@@ -105,6 +127,7 @@ private:
     // dossier (m_p*) n'est écrit et lu que dans le thread de la passe : pas de verrou.
     void reportProgress(qint64 filesSeen) const;
 
+    QStringList      m_libraryProviders;
     PhotoRepository* m_repo;
     ExifExtractor*   m_extractor;
     QStringList      m_roots;

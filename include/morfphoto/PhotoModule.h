@@ -8,6 +8,9 @@
 #include "morfphoto/IModule.h"
 #include "morfphoto/Indexer.h"
 #include "morfphoto/SourceManager.h"
+#include "morfphoto/ThumbnailCache.h"
+#include <memory>
+#include <atomic>
 
 #include <QJsonObject>
 #include <QJsonArray>
@@ -65,7 +68,27 @@ public:
     QJsonArray  years() const;
     QJsonObject indexStatus() const;
     // Export compact des photos presentes pour la couche d'analyse (morfAnalytics).
-    QJsonObject photoDataset() const;
+    // `withLibrary` : ajoute les colonnes de la bibliotheque (contrat morfphoto-library/1).
+    QJsonObject photoDataset(bool withLibrary = false, bool withGps = false) const;
+
+    // --- Bibliotheque (contrat morfphoto-library/1) : eteinte tant qu'aucun fournisseur
+    // de sidecars n'est configure (`sidecars.providers`). ---
+    // Revision du catalogue : chaine opaque qui change des que ce que l'API renvoie peut avoir
+    // change (fin de passe, ecriture par l'API). Sert d'ETag : un client qui la connait ne
+    // retelecharge rien tant qu'elle est la meme (304). Nouvelle a chaque demarrage.
+    QString catalogRevision() const;
+    void bumpCatalogRevision() { m_revisionCounter.fetch_add(1, std::memory_order_relaxed); }
+    bool libraryEnabled() const { return !m_libraryProviders.isEmpty(); }
+    QStringList libraryProviders() const { return m_libraryProviders; }
+    QJsonObject libraryPhoto(int fileId, bool* found) const;
+    QJsonArray  libraryPhotos(const QVector<int>& ids) const;
+    // `cursor` non vide : pagination par curseur (stable quand le catalogue change pendant la
+    // lecture) ; *cursorValid passe a false si le curseur est illisible.
+    QJsonObject libraryList(const LibraryFilter& f, int page, int pageSize, bool skipTotal,
+                            const QString& cursor = {}, bool* cursorValid = nullptr) const;
+    QJsonObject libraryFacets(const LibraryFilter& f) const;
+    QJsonObject librarySubfolders(const QString& folder) const;
+    QJsonObject librarySidecars() const;
 
     // --- Contexte photographique par répertoire (morfphoto-context/2) ---
     // Lectures : la liste des répertoires + leur contexte (écran de qualification
@@ -73,9 +96,11 @@ public:
     // "qualified" | "unqualified" | "invalid".
     QJsonArray  listContexts(const QString& status) const;
     QJsonObject getContext(const QString& directory) const;
-    // Vignette JPEG d'un fichier (apercu embarque via exiftool, JPEG comme RAW). Sert
-    // l'apercu des clients (PhotoHub). Valide que `path` est sous une racine autorisee et
-    // pointe un fichier existant. *ok=false + retour vide si indisponible.
+    // Vignette JPEG de grille d'un fichier (400 px max). Sert l'apercu des clients
+    // (PhotoHub). Un JPEG est reduit directement, un RAW passe par son apercu embarque
+    // (exiftool) ; le resultat est garde dans le cache disque. Valide que `path` est sous
+    // une racine autorisee et pointe un fichier existant. *ok=false + retour vide si
+    // indisponible.
     QByteArray  thumbnail(const QString& path, bool* ok) const;
     // Écriture (morfPhoto est l'UNIQUE écrivain de `.morfphoto.json`). `context` et
     // `subject` sont OBLIGATOIRES et doivent appartenir au vocabulaire gelé. Écrit le
@@ -165,6 +190,17 @@ private:
     // Délai borné des sondes d'accessibilité d'une racine (montages distants) :
     // au-delà, la racine est déclarée indisponible plutôt que de rester figé.
     int         m_probeTimeoutMs = 5000;
+    // Fournisseurs de sidecars actifs, par ordre de priorite (config `sidecars.providers`).
+    // Vide = bibliotheque eteinte : indexation et API exactement comme avant.
+    QStringList m_libraryProviders;
+    // Revision du catalogue (ETag) : horodatage de demarrage + compteur incremente a chaque
+    // fin de passe et a chaque ecriture de l'API.
+    qint64 m_revisionEpoch = 0;
+    std::atomic<qint64> m_revisionCounter{0};
+
+    // Cache disque des vignettes de grille (400 px). Nul si `thumbnails.cache` est
+    // desactive : les vignettes sont alors produites a chaque demande, comme avant.
+    std::unique_ptr<ThumbnailCache> m_thumbCache;
 
     // Prérequis ExifTool, sondé une fois au démarrage. Sans lui, les fichiers sont
     // indexés mais l'extraction EXIF échoue en silence : on le rend explicite.

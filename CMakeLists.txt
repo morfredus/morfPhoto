@@ -21,8 +21,9 @@ set(CMAKE_AUTOMOC ON)
 
 # Core + Network : serveur HTTP entrant, client HTTP sortant, JSON.
 # Sql : base SQLite locale du domaine photo (source de verite des metadonnees).
+# Gui : QImage/QImageReader seulement (vignettes), aucune fenetre ni affichage requis.
 # Concurrent : chaque passe d'indexation tourne sur un thread du pool.
-find_package(Qt6 REQUIRED COMPONENTS Core Network Sql Concurrent)
+find_package(Qt6 REQUIRED COMPONENTS Core Network Sql Concurrent Gui)
 
 # --- Enregistrement des compilations (best-effort) ------------------------
 # Chronometre le vrai travail des compilateurs et signale la duree a
@@ -50,11 +51,14 @@ add_library(morfPhoto STATIC
     src/Paths.cpp                         # resolution des emplacements (doctrine FILESYSTEM.md)
     src/ModuleFactory.cpp
     # --- domaine photo (metier morfPhoto) ---
+    src/PhotoRepositoryLibrary.cpp        # depot : bibliotheque (ecriture, filtres, facettes, rapport)
     src/PhotoRepository.cpp               # depot SQLite : source de verite des metadonnees
     src/ExifExtractor.cpp                 # extraction ExifTool (QProcess -stay_open)
     src/PhotoScanner.cpp                  # parcours FS + garde-fou de perimetre
     src/ContextFile.cpp                   # lecture/ecriture .morfphoto.json (contexte par dossier)
     src/Indexer.cpp                       # passe de reconciliation (verdict, garde passe-unique)
+    src/LibraryMetadata.cpp               # bibliotheque : sidecars XMP (darktable, generique), fusion par champ
+    src/ThumbnailCache.cpp                # vignettes de grille 400 px + cache disque
     src/PhotoModule.cpp                   # module metier : assemble tout le domaine
     src/SourceManager.cpp                 # sources SMB poussees (montage via helper privilegie)
     src/PhotoApi.cpp                      # routage /api/v1 (delegue par HttpServer)
@@ -84,7 +88,7 @@ target_include_directories(morfPhoto PUBLIC
 )
 
 target_link_libraries(morfPhoto
-    PUBLIC  Qt6::Core Qt6::Network Qt6::Sql Qt6::Concurrent
+    PUBLIC  Qt6::Core Qt6::Network Qt6::Sql Qt6::Concurrent Qt6::Gui
     PRIVATE morfBeacon::morfBeacon)
 
 # Numero de version accessible depuis le code.
@@ -117,4 +121,7 @@ if(MORFPHOTO_BUILD_SMOKE)
     add_executable(morfphoto_smoke test/smoke_main.cpp)
     target_link_libraries(morfphoto_smoke PRIVATE morfPhoto::morfPhoto)
     add_test(NAME smoke COMMAND morfphoto_smoke)
+    add_executable(morfphoto_library_test test/library_test.cpp)
+    target_link_libraries(morfphoto_library_test PRIVATE morfPhoto::morfPhoto)
+    add_test(NAME library COMMAND morfphoto_library_test)
 endif()

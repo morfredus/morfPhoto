@@ -2,7 +2,7 @@
 
 *Read in another language: **English** (this document) · [Français](README.fr.md).*
 
-[![Version](https://img.shields.io/badge/version-0.16.1-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.24.0-blue)](CHANGELOG.md)
 ![C++](https://img.shields.io/badge/C%2B%2B-17-00599C?logo=cplusplus)
 ![Qt](https://img.shields.io/badge/Qt-6-41CD52?logo=qt)
 ![Build](https://img.shields.io/badge/CMake-3.21+-064F8C?logo=cmake)
@@ -74,7 +74,13 @@ GET  /api/v1/contexts            directories + photographic context (filter ?sta
 GET  /api/v1/context             one directory's context (?directory=...); unqualified if no valid .morfphoto.json
 PUT  /api/v1/context             write .morfphoto.json: {directory, context, subject, motif?, description?} (context+subject required)
 DELETE /api/v1/context           remove .morfphoto.json (?directory=...): the folder becomes unqualified again
-GET  /api/v1/thumbnail           image/jpeg thumbnail of a file (?path=...); embedded preview via exiftool (JPEG and RAW)
+GET  /api/v1/thumbnail           image/jpeg grid thumbnail of a file (?path=...), 400 px max; JPEG read directly, RAW via its embedded preview (exiftool); cached on disk
+GET  /api/v1/library             photo library: photos + versions (rating, rejected, labels, keywords, edited), filterable, `page`/`page_size` or `cursor`; ETag/304; off unless `sidecars.providers` is set
+GET  /api/v1/library/{id}        one photo of the library (also `?ids=1,2,3`)
+GET  /api/v1/library/facets      counts per filter value, each list computed with every filter but its own
+GET  /api/v1/library/subfolders  direct subfolders (?folder_path=...) with their photo counts
+GET  /api/v1/library/sidecars    report: active providers, photos per provider, unreadable sidecars
+GET  /api/v1/photos/dataset?with=library,gps   analysis export plus the library columns (one row per photo) and/or the position (`gps`)
 GET  /api/v1/roots               allowed roots (config + validated SMB mounts)
 GET  /api/v1/sources             pushed SMB sources (+ mounted, reachable)
 GET  /api/v1/sources/ready       privileged helper startable
@@ -84,6 +90,47 @@ POST /api/v1/purge               PERMANENT deletion: {"scope":"folder|year|camer
 
 Allowed roots are declared in the configuration; selections managed through the API
 always stay inside them.
+
+### API key (optional)
+
+By default the API is open, as it has always been. To protect it, set `api_key` in
+`morfphoto.json` (or the `MORFPHOTO_API_KEY` environment variable, which wins): every
+`/api/` request must then carry `Authorization: Bearer <key>`, otherwise it gets `401`.
+`/healthz`, `/status` and `/modules` stay open so fleet supervision keeps working;
+`/status` only reports `api_key_required` (never the key). Generate a key with
+`openssl rand -hex 32`. Clients that read the API must be given the key: PhotoHub asks
+for it (File > API key) and stores it encrypted on the Windows account; morfAnalytics (0.80.0 and later) takes it in its `photo` module
+(`api_key` or `api_keys`).
+
+### Photo library (optional, read-only)
+
+Next to the EXIF, programs leave their own layer beside the images: star rating, reject flag,
+colour labels, keywords, title, "edited or not", versions. morfPhoto can read it, following the
+`morfphoto-library/1` contract (morfSystem repository, `docs/CONTRAT-BIBLIOTHEQUE-PHOTO.md`).
+It is **off by default**; naming at least one provider turns it on:
+
+```json
+"sidecars": { "providers": ["darktable", "xmp", "dxo", "lightcraft"] }
+```
+
+- `darktable`: `photo.ext.xmp` and `photo_NN.ext.xmp` (virtual copies become versions).
+- `xmp`: generic XMP (Lightroom and Camera Raw, Bridge, digiKam, XnView...), `photo.xmp` or
+  `photo.ext.xmp`, shared by a RAW and its JPEG.
+- `dxo`: DxO PhotoLab (`photo.ext.dop`, a text file of nested tables): rating, keywords, position and copyright notice.
+  "Edited" stays unknown (PhotoLab writes a `.dop` as soon as an image is opened, with automatic corrections already
+  applied) and the virtual copies are not read yet.
+- `lightcraft`: the `lc:flag` that Lightcraft writes in the same `.xmp` as darktable: `pick` is a picked photo (`picked: true`), `none` no flag (`false`) and `reject` a rejected photo
+  (`rejected: true`). Any other value stays unknown, and `lc:settings` is not read. Enable it next to `darktable`: the flag is attributed to `lightcraft`.
+- `file`: the XMP embedded in the image itself (read through ExifTool), always last.
+
+The list order is the priority order and each field is resolved on its own: the first provider
+with a value wins. Two fields are the exception and follow "one provider is enough": **edited** and **rejected**
+are true as soon as one provider says so (a rejection made in one program is a gesture another program cannot undo). The EXIF of the image stays the authority on the shot; sidecars never replace
+it. An unknown value is `null`, never a default (a missing rating is not 0 stars). morfPhoto never
+writes a sidecar. Turning the library on re-reads each photo once; a later pass only re-reads the
+photos whose sidecars changed. Capture One, RawTherapee and ON1 are not read yet. A version carries `picked` (true, false or `null`) and `/library` filters on `?picked=true|false`.
+
+`/library` pages with `cursor` (the `next` field of the previous page) instead of `page` when the catalogue may change between two reads: no photo is skipped or repeated. `/library` and `photos/dataset?with=library` carry an `ETag` (the catalogue revision, new after each indexing pass and each write); a client that sends it back in `If-None-Match` gets `304` without any work done on the server.
 
 ## Build
 

@@ -664,7 +664,7 @@ QJsonArray PhotoRepository::years() {
     return arr;
 }
 
-QJsonObject PhotoRepository::photoDataset() {
+QJsonObject PhotoRepository::photoDataset(bool withLibrary, bool withGps) {
     // Dictionnaires : chaque chaine repetee (boitier, objectif, type) n'est stockee
     // qu'une fois ; les colonnes ne portent que son index. Un QHash retient l'index
     // deja attribue, un QJsonArray garde l'ordre d'apparition (l'index EST la position).
@@ -692,6 +692,27 @@ QJsonObject PhotoRepository::photoDataset() {
     QJsonArray fingerprint;   // empreinte de dedup (une par photo), pour l'analyse multi-sources
     int count = 0;
 
+    // Colonnes de la bibliotheque (contrat morfphoto-library/1, §9) : une ligne par photo,
+    // jamais par version, pour que les copies ne gonflent pas les comptages. La version
+    // principale est celle qui porte le plus petit numero. Les valeurs inconnues restent null.
+    QJsonArray libPicked;
+    QJsonArray libRating, libRejected, libEdited, libEditedAny, libRatingMax, libVersions,
+               libLabels, libSource, libKeywords;
+    QJsonArray gpsLat, gpsLon, gpsSrcCol, gpsDict;   // position (with=gps)
+    QHash<QString, int> gpsIdx;
+    QJsonArray kwDict, srcDict, lblDict;
+    QHash<QString, int> kwIdx, srcIdx, lblIdx;
+    QHash<int, QStringList> principalKeywords;   // id de fichier -> mots-cles de la version principale
+    if (withLibrary) {
+        QSqlQuery kq(db());
+        kq.exec(QStringLiteral(
+            "SELECT v.file_id, k.keyword FROM library_keywords k JOIN library_versions v ON v.id = k.version_id "
+            "WHERE v.version = (SELECT MIN(version) FROM library_versions WHERE file_id = v.file_id) "
+            "ORDER BY k.keyword"));
+        while (kq.next())
+            principalKeywords[kq.value(0).toInt()] << kq.value(1).toString();
+    }
+
     QSqlQuery q(db());
     // Un seul parcours des photos presentes ; ordre chronologique stable et utile.
     // filename et size ne sont PAS exposes : ils servent uniquement a calculer
@@ -699,13 +720,34 @@ QJsonObject PhotoRepository::photoDataset() {
     // Jointure GAUCHE sur folder_contexts (cle = repertoire) : context/subject sont deux
     // dimensions INDEPENDANTES, null si le dossier n'est pas qualifie. La distinction
     // null (aucun .morfphoto.json) vs "INCONNU" (valeur choisie) est ainsi preservee.
-    q.exec(QStringLiteral(
+    QString sql = QStringLiteral(
         "SELECT f.taken_at, f.camera_model, f.lens, f.file_type, f.focal_length, "
         "f.focal_length_35mm, f.aperture, f.iso, f.shutter_speed_s, f.folder_id, "
-        "f.filename, f.size, c.context, c.subject "
-        "FROM files f LEFT JOIN folder_contexts c ON c.directory = f.directory WHERE ")
-        + analyzablePredicate() +
-        QStringLiteral(" ORDER BY f.taken_at IS NULL, f.taken_at, f.id"));
+        "f.filename, f.size, c.context, c.subject, f.id");
+    if (withLibrary)
+        sql += QStringLiteral(
+            ", lf.versions, lf.main_source, pv.rating, pv.rejected, pv.edited, pv.labels, "
+            "CASE WHEN pv.sources LIKE '%\"color_labels\"%' THEN 1 ELSE 0 END, "
+            "CASE WHEN pv.sources LIKE '%\"keywords\"%' THEN 1 ELSE 0 END, "
+            "(SELECT MAX(edited) FROM library_versions WHERE file_id = f.id), "
+            "(SELECT MAX(rating) FROM library_versions WHERE file_id = f.id), pv.picked");
+    // Position : l'EXIF du fichier fait autorite, le sidecar ne sert qu'a defaut (contrat library, §3).
+    // Les colonnes viennent APRES celles de la bibliotheque : leurs rangs ne bougent pas.
+    const int gpsBase = withLibrary ? 26 : 15;
+    if (withGps)
+        sql += QStringLiteral(
+            ", COALESCE(f.latitude, lf.gps_latitude), COALESCE(f.longitude, lf.gps_longitude), "
+            "CASE WHEN f.latitude IS NOT NULL AND f.longitude IS NOT NULL THEN 'file' ELSE lf.gps_source END");
+    sql += QStringLiteral(" FROM files f LEFT JOIN folder_contexts c ON c.directory = f.directory");
+    if (withLibrary || withGps)
+        sql += QStringLiteral(" LEFT JOIN library_files lf ON lf.file_id = f.id");
+    if (withLibrary)
+        sql += QStringLiteral(
+            " LEFT JOIN library_versions pv ON pv.file_id = f.id AND pv.version = "
+            "(SELECT MIN(version) FROM library_versions WHERE file_id = f.id)");
+    sql += QStringLiteral(" WHERE ") + analyzablePredicate()
+         + QStringLiteral(" ORDER BY f.taken_at IS NULL, f.taken_at, f.id");
+    q.exec(sql);
     while (q.next()) {
         takenAt.append(num(q.value(0)));
         camera.append(intern(q.value(1), camDict, camIdx));
@@ -721,6 +763,41 @@ QJsonObject PhotoRepository::photoDataset() {
                                          q.value(0).toString()));
         context.append(intern(q.value(12), ctxDict, ctxIdx));
         subject.append(intern(q.value(13), subjDict, subjIdx));
+        if (withLibrary) {
+            const bool known = !q.value(15).isNull();   // une ligne library_files existe
+            libVersions.append(known ? QJsonValue(q.value(15).toInt()) : QJsonValue(QJsonValue::Null));
+            libSource.append(intern(q.value(16), srcDict, srcIdx));
+            libRating.append(num(q.value(17)));
+            libRejected.append(q.value(18).isNull() ? QJsonValue(QJsonValue::Null) : QJsonValue(q.value(18).toInt() != 0));
+            libEdited.append(q.value(19).isNull() ? QJsonValue(QJsonValue::Null) : QJsonValue(q.value(19).toInt() != 0));
+            libEditedAny.append(q.value(23).isNull() ? QJsonValue(QJsonValue::Null) : QJsonValue(q.value(23).toInt() != 0));
+            libRatingMax.append(num(q.value(24)));
+            libPicked.append(q.value(25).isNull() ? QJsonValue(QJsonValue::Null) : QJsonValue(q.value(25).toInt() != 0));
+            // Etiquettes et mots-cles : connus seulement si le sidecar principal les porte
+            // (liste vide connue ≠ inconnu).
+            if (q.value(21).toInt() != 0) {
+                QJsonArray idx;
+                for (const QString& n : labelNames(q.value(20).toInt()))
+                    idx.append(intern(n, lblDict, lblIdx));
+                libLabels.append(idx);
+            } else {
+                libLabels.append(QJsonValue(QJsonValue::Null));
+            }
+            if (q.value(22).toInt() != 0) {
+                QJsonArray idx;
+                for (const QString& k : principalKeywords.value(q.value(14).toInt()))
+                    idx.append(intern(k, kwDict, kwIdx));
+                libKeywords.append(idx);
+            } else {
+                libKeywords.append(QJsonValue(QJsonValue::Null));
+            }
+        }
+        if (withGps) {
+            // null reste null : une photo sans position n'est pas a (0, 0).
+            gpsLat.append(num(q.value(gpsBase)));
+            gpsLon.append(num(q.value(gpsBase + 1)));
+            gpsSrcCol.append(intern(q.value(gpsBase + 2), gpsDict, gpsIdx));
+        }
         ++count;
     }
 
@@ -731,10 +808,34 @@ QJsonObject PhotoRepository::photoDataset() {
         {"context", context}, {"subject", subject},
         {"fingerprint", fingerprint},
     };
+    if (withLibrary) {
+        columns.insert(QStringLiteral("rating"), libRating);
+        columns.insert(QStringLiteral("rejected"), libRejected);
+        columns.insert(QStringLiteral("edited"), libEdited);
+        columns.insert(QStringLiteral("edited_any"), libEditedAny);
+        columns.insert(QStringLiteral("picked"), libPicked);
+        columns.insert(QStringLiteral("rating_max"), libRatingMax);
+        columns.insert(QStringLiteral("versions"), libVersions);
+        columns.insert(QStringLiteral("color_labels"), libLabels);
+        columns.insert(QStringLiteral("source"), libSource);
+        columns.insert(QStringLiteral("keywords"), libKeywords);
+    }
+    if (withGps) {
+        columns.insert(QStringLiteral("latitude"), gpsLat);
+        columns.insert(QStringLiteral("longitude"), gpsLon);
+        columns.insert(QStringLiteral("gps_source"), gpsSrcCol);
+    }
     QJsonObject dictionaries{
         {"camera", camDict}, {"lens", lensDict}, {"file_type", typeDict},
         {"context", ctxDict}, {"subject", subjDict},
     };
+    if (withGps)
+        dictionaries.insert(QStringLiteral("gps_source"), gpsDict);
+    if (withLibrary) {
+        dictionaries.insert(QStringLiteral("keyword"), kwDict);
+        dictionaries.insert(QStringLiteral("source"), srcDict);
+        dictionaries.insert(QStringLiteral("color_label"), lblDict);
+    }
 
     // Libellés des dossiers : la colonne folder_id porte l'identifiant brut ; cette
     // table de correspondance id -> libellé permet à la couche d'analyse de filtrer

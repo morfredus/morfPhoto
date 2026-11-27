@@ -12,6 +12,7 @@
 #include <functional>
 
 #include "morfphoto/PhotoTypes.h"
+#include "morfphoto/LibraryMetadata.h"
 
 // -----------------------------------------------------------------------------
 // Parcours du système de fichiers et garde-fou de périmètre.
@@ -36,6 +37,9 @@ namespace morfphoto {
 struct ScanResult {
     bool              completed = false;
     QVector<FileInfo> files;
+    // Sidecars `.xmp` croises pendant le parcours (seulement si la bibliotheque est
+    // activee) : le rattachement a une image se fait par le nom, sans rouvrir le disque.
+    QVector<SidecarFile> sidecars;
 };
 
 // Classe une extension en type de fichier (RAW regroupés, reste explicite).
@@ -64,7 +68,8 @@ bool probeAccessible(const QString& path, int timeoutMs);
 // bout et `completed` vaut true. C'est le mécanisme qui borne le « ça a l'air
 // figé » sans imposer de deadline arbitraire à un gros parcours légitime.
 ScanResult scanFolder(const QString& folder, bool recursive,
-                      const std::function<bool()>& stillAvailable = {});
+                      const std::function<bool()>& stillAvailable = {},
+                      bool collectSidecars = false);
 
 // Compte les fichiers image sans les charger en mémoire (pas d'EXIF, pas de
 // FileInfo). Utile aux tests et à un diagnostic ; l'indexation n'en fait plus

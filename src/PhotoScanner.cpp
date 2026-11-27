@@ -100,7 +100,7 @@ bool probeAccessible(const QString& path, int timeoutMs) {
 }
 
 ScanResult scanFolder(const QString& folder, bool recursive,
-                      const std::function<bool()>& stillAvailable) {
+                      const std::function<bool()>& stillAvailable, bool collectSidecars) {
     // Intervalle de contrôle : consulter stillAvailable toutes les N entrées suffit
     // à borner la réactivité sans transformer chaque fichier en sonde réseau.
     constexpr int kCheckEvery = 256;
@@ -122,8 +122,17 @@ ScanResult scanFolder(const QString& folder, bool recursive,
         it.next();
         const QFileInfo fi = it.fileInfo();
         const QString ext = QStringLiteral(".") + fi.suffix().toLower();
-        if (!isImageExtension(ext))
+        if (!isImageExtension(ext)) {
+            if (collectSidecars && (ext == QLatin1String(".xmp") || ext == QLatin1String(".dop"))) {
+                SidecarFile sc;
+                sc.directory = fi.absolutePath();
+                sc.name      = fi.fileName();
+                sc.size      = fi.size();
+                sc.mtime     = fi.lastModified().toSecsSinceEpoch();
+                res.sidecars.push_back(sc);
+            }
             continue;
+        }
         FileInfo info;
         info.path      = fi.absoluteFilePath();
         info.directory = fi.absolutePath();
@@ -132,6 +141,7 @@ ScanResult scanFolder(const QString& folder, bool recursive,
         info.fileType  = fileTypeFor(ext);
         info.size      = fi.size();
         info.mtime     = fi.lastModified().toSecsSinceEpoch();
+        info.isSymlink = fi.isSymLink();
         res.files.push_back(info);
     }
     // Arrivé au bout du parcours : le scan est fiable et complet.

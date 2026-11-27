@@ -35,6 +35,11 @@ public:
     ExifExtractor(QString binary, bool stayOpen);
     ~ExifExtractor();
 
+    // Demande aussi les tags XMP de la bibliotheque (etiquette, mots-cles, titre...) pour
+    // le fournisseur « file » (XMP embarque dans l'image). Eteint par defaut : sans
+    // bibliotheque, l'extraction reste exactement celle d'avant.
+    void setLibraryTags(bool on) { m_libraryTags = on; }
+
     void open();     // démarre le process persistant (idempotent)
     void close();    // arrête proprement le process
 
@@ -63,6 +68,7 @@ private:
 
     QString    m_binary;
     bool       m_stayOpen;
+    bool       m_libraryTags = false;
     QProcess*  m_proc = nullptr;
     int        m_counter = 0;   // numérote les -execute pour synchroniser
 };

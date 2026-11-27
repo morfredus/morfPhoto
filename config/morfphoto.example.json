@@ -7,6 +7,9 @@
   "http_port": 8793,
   "bind_address": "0.0.0.0",
 
+  "_comment_api_key": "Cle exigee sur /api/ via l'en-tete 'Authorization: Bearer <cle>'. Vide = pas d'authentification (comportement historique). La variable d'environnement MORFPHOTO_API_KEY a priorite sur ce champ. /healthz, /status et /modules restent ouverts pour que la supervision du parc continue de fonctionner. Generer une cle : openssl rand -hex 32. Le fichier est lu par le compte du service : le garder illisible des autres utilisateurs si une cle y figure.",
+  "api_key": "",
+
   "beacon": {
     "_comment": "Annonce de presence sur le LAN (protocole morfBeacon, port du parc).",
     "enabled": true,
@@ -30,6 +33,17 @@
         "_comment": "'interval_ms' : cadence de la reconciliation automatique. DEFAUT 0 = automatique DESACTIVE : aucune passe de fond, l'indexation se fait UNIQUEMENT a la demande (bouton PhotoHub ou POST /api/v1/index) -- aucune pression de fond sur la machine. Mettre une valeur positive pour reactiver une passe periodique (ex. 86400000 = une fois par jour) ; attention, une passe re-parcourt et 'stat' tout l'arbre des dossiers surveilles plus une sonde par racine, couteux surtout sur un montage reseau. 'availability_timeout_ms' : delai borne des sondes d'accessibilite d'une racine avant de la declarer indisponible (tolerance aux montages distants type SMB/CIFS ou NFS). Au-dela, la racine est jugee injoignable et la passe est interrompue proprement -- sans marquer les fichiers comme disparus -- au lieu de rester figee le temps du timeout du montage (jusqu'a ~180 s en CIFS). Defaut 5000.",
         "interval_ms": 0,
         "availability_timeout_ms": 5000
+      },
+      "thumbnails": {
+        "_comment": "Vignettes de grille (GET /api/v1/thumbnail), 400 px max. 'cache' : garder les vignettes sur disque (defaut true) ; le cache est reconstructible, on peut le supprimer. 'cache_dir' vide = <etat>/cache/thumbnails. 'max_mb' : taille maximale du cache, les moins recemment vues partent d'abord (defaut 512, 0 = sans plafond). 'min_free_mb' : plus aucune ecriture quand l'espace libre passe sous ce seuil (defaut 512).",
+        "cache": true,
+        "cache_dir": "",
+        "max_mb": 512,
+        "min_free_mb": 512
+      },
+      "sidecars": {
+        "_comment": "Bibliotheque photo (contrat morfphoto-library/1) : lit la note, le rejet, les etiquettes, les mots-cles, 'retouchee' et les versions que les logiciels posent a cote des images. ETEINTE par defaut (liste vide) : indexation et API inchangees. 'providers' : fournisseurs actives, DANS L'ORDRE DE PRIORITE (le premier qui a une valeur l'emporte, champ par champ). Connus : 'darktable' (photo.ext.xmp, photo_NN.ext.xmp), 'xmp' (XMP generique : Lightroom, digiKam, Bridge...), 'dxo' (DxO PhotoLab, photo.ext.dop), 'lightcraft' (drapeau lc:flag ecrit dans le meme .xmp que darktable). L'XMP embarque dans l'image ('file') est lu d'office, en dernier. morfPhoto ne modifie jamais un sidecar. Activer la bibliotheque relit chaque photo une fois.",
+        "providers": []
       },
       "exiftool": {
         "_comment": "ExifTool est un PREREQUIS SYSTEME, non installe par service.py : `sudo apt install libimage-exiftool-perl` (Debian/Ubuntu/Raspberry Pi OS). Sans lui, les fichiers sont indexes mais les metadonnees restent vides ; /api/v1/index/status l'annonce alors dans last_error. 'binary' : nom sur le PATH, ou chemin complet (utile sous Windows). 'stay_open' : garder un process ExifTool ouvert (bien plus rapide sur une grosse phototheque).",

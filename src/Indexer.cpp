@@ -11,6 +11,7 @@
 #include "morfphoto/ContextFile.h"
 
 #include <QDateTime>
+#include <QElapsedTimer>
 #include <QSet>
 #include <QDir>
 #include <QFileInfo>
@@ -122,6 +123,17 @@ int Indexer::run(IndexMode mode, const QVector<int>& folderIds, const QString& t
     return runId;
 }
 
+bool Indexer::fileWithinRoots(const FileInfo& info, QHash<QString, bool>& cache) const {
+    if (info.isSymlink)
+        return isWithinRoots(info.path, m_roots);
+    const auto it = cache.constFind(info.directory);
+    if (it != cache.constEnd())
+        return it.value();
+    const bool ok = isWithinRoots(info.directory, m_roots);
+    cache.insert(info.directory, ok);
+    return ok;
+}
+
 bool Indexer::reconcileFolder(const FolderRow& folder, IndexMode mode, int runId,
                               RunCounts& counts, QSet<QString>& unavailableRoots) {
     // Garde-fou : la sélection doit rester sous sa propre racine autorisée.
@@ -154,6 +166,12 @@ bool Indexer::reconcileFolder(const FolderRow& folder, IndexMode mode, int runId
     }
 
     const KnownFiles known = m_repo->existingFilesInFolder(folder.id);
+    const bool library = !m_libraryProviders.isEmpty();
+    // Etat de lecture de la bibliotheque avant la passe : un fichier jamais lu par elle
+    // (premiere activation) doit repasser par ExifTool pour en rapporter l'XMP embarque.
+    const auto libraryBefore = library ? m_repo->libraryState(folder.id)
+                                       : QHash<QString, PhotoRepository::LibraryFileState>();
+    QSet<QString> touched;   // fichiers neufs ou re-extraits pendant cette passe
     QSet<QString> seen;
     QSet<QString> dirs;   // répertoires distincts vus, pour la découverte de contexte
 
@@ -161,13 +179,15 @@ bool Indexer::reconcileFolder(const FolderRow& folder, IndexMode mode, int runId
     // source meurt en plein parcours, le scan s'arrête et signale l'incomplétude.
     const ScanResult scan = scanFolder(
         folder.path, folder.recursive,
-        [this, &folder]() { return probeAccessible(folder.rootPath, m_probeTimeoutMs); });
+        [this, &folder]() { return probeAccessible(folder.rootPath, m_probeTimeoutMs); },
+        library);
 
     // Total « connu pour l'instant » = fichiers déjà listés. Ça grandit dossier
     // après dossier ; le pourcentage se recalcule sans second parcours.
     qint64 nThis = 0;
+    QHash<QString, bool> withinCache;   // dossier -> dans les racines ? (resolu une fois)
     for (const FileInfo& info : scan.files) {
-        if (isWithinRoots(info.path, m_roots))
+        if (fileWithinRoots(info, withinCache))
             ++nThis;
     }
     m_pFilesDiscovered += nThis;
@@ -175,9 +195,46 @@ bool Indexer::reconcileFolder(const FolderRow& folder, IndexMode mode, int runId
         m_pFilesTotal = m_pFilesDiscovered;
     reportProgress(counts.seen);
 
+    // Ecritures groupees : sans transaction, chaque insertFile / updateFile / touchSeen est
+    // un commit SQLite, donc un fsync. Sur des milliers de photos inchangees, une passe
+    // passait l'essentiel de son temps a synchroniser le disque. On valide par paquets de
+    // 200 fichiers OU toutes les secondes ; un arret brutal ne perd que le lot en cours, que
+    // la passe suivante refait. L'extraction ExifTool (lente, jusqu'a 15 s au pire) se fait
+    // HORS transaction : un lot ouvert pendant ce temps bloquerait les autres ecritures du
+    // service (contexte photographique, sources).
+    constexpr int kBatchFiles = 200;
+    constexpr qint64 kBatchMs = 1000;
+    QElapsedTimer batchClock;
+    batchClock.start();
+    int inBatch = 0;
+    bool batchOpen = m_repo->beginBatch();
+    auto flushBatch = [&](bool force) {
+        if (!batchOpen)
+            return;
+        if (!force && ++inBatch < kBatchFiles && batchClock.elapsed() < kBatchMs)
+            return;
+        m_repo->commitBatch();
+        batchOpen = force ? false : m_repo->beginBatch();
+        inBatch = 0;
+        batchClock.restart();
+    };
+    auto suspendBatch = [&]() {
+        if (batchOpen) {
+            m_repo->commitBatch();
+            batchOpen = false;
+            inBatch = 0;
+        }
+    };
+    auto resumeBatch = [&]() {
+        if (!batchOpen) {
+            batchOpen = m_repo->beginBatch();
+            batchClock.restart();
+        }
+    };
+
     for (const FileInfo& info : scan.files) {
         // Défense en profondeur : ne jamais rien indexer hors des racines globales.
-        if (!isWithinRoots(info.path, m_roots))
+        if (!fileWithinRoots(info, withinCache))
             continue;
         ++counts.seen;
         seen.insert(info.path);
@@ -191,18 +248,34 @@ bool Indexer::reconcileFolder(const FolderRow& folder, IndexMode mode, int runId
         auto it = known.find(info.path);
         if (it == known.end()) {
             ExifData exif;
+            suspendBatch();
             const bool ok = extract(runId, info.path, counts, exif);
+            resumeBatch();
             m_repo->insertFile(folder.id, info, exif, ok, nowIso());
             ++counts.created;
+            touched.insert(info.path);
         } else if (mode == IndexMode::Full || it->size != info.size || it->mtime != info.mtime) {
             ExifData exif;
+            suspendBatch();
             const bool ok = extract(runId, info.path, counts, exif);
+            resumeBatch();
             m_repo->updateFile(it->id, info, exif, ok, nowIso());
             ++counts.updated;
+            touched.insert(info.path);
+        } else if (library && libraryBefore.value(info.path).fingerprint.isEmpty()) {
+            // Fichier inchange mais jamais lu par la bibliotheque : une relecture unique.
+            ExifData exif;
+            suspendBatch();
+            const bool ok = extract(runId, info.path, counts, exif);
+            resumeBatch();
+            m_repo->updateFile(it->id, info, exif, ok, nowIso());
+            touched.insert(info.path);
         } else {
             m_repo->touchSeen(it->id, nowIso());
         }
+        flushBatch(false);
     }
+    flushBatch(true);   // le lot en cours est valide avant tout verdict de disparition
 
     // Point crucial : le verdict de disparition n'est FIABLE que si la racine a été
     // parcourue entièrement ET qu'elle répond toujours à la fin. Un scan incomplet
@@ -223,6 +296,8 @@ bool Indexer::reconcileFolder(const FolderRow& folder, IndexMode mode, int runId
     // répertoires vus est alors sûr (on ne supprimera pas un contexte parce qu'une
     // source était momentanément muette). Vaut aussi pour un support amovible présent.
     refreshContexts(dirs, runId, counts);
+    if (library)
+        refreshLibrary(folder, scan, touched, runId);
 
     // Support amovible (CD/DVD, disque d'archive) : l'absence est NORMALE. Même un
     // scan mené jusqu'au bout ne vaut jamais suppression ici - un disque éjecté (ou
@@ -246,6 +321,98 @@ bool Indexer::reconcileFolder(const FolderRow& folder, IndexMode mode, int runId
 
     m_repo->setFolderScanned(folder.id, nowIso());
     return false;
+}
+
+void Indexer::refreshLibrary(const FolderRow& folder, const ScanResult& scan,
+                             const QSet<QString>& touched, int runId) {
+    QHash<QString, QVector<SidecarFile>> sidecarsByDir;
+    for (const SidecarFile& s : scan.sidecars)
+        sidecarsByDir[s.directory].push_back(s);
+    QHash<QString, QSet<QString>> imagesByDir;
+    for (const FileInfo& info : scan.files)
+        imagesByDir[info.directory].insert(info.filename.toLower());
+
+    // Identifiants et empreintes APRES l'insertion des fichiers neufs.
+    const auto state = m_repo->libraryState(folder.id);
+
+    // Un dossier = une transaction (par paquets de 200) : une ecriture isolee par photo
+    // coute un fsync chacune.
+    m_repo->beginBatch();
+    int written = 0;
+    QHash<QString, bool> withinCache;
+    for (const FileInfo& info : scan.files) {
+        if (!fileWithinRoots(info, withinCache))
+            continue;
+        const auto st = state.constFind(info.path);
+        if (st == state.constEnd())
+            continue;
+        const QVector<SidecarRef> refs = matchSidecars(info.filename, info.directory,
+                                                       sidecarsByDir.value(info.directory),
+                                                       imagesByDir.value(info.directory));
+        const QString fingerprint = libraryFingerprint(refs, m_libraryProviders);
+        if (!touched.contains(info.path) && st->fingerprint == fingerprint)
+            continue;   // rien n'a bouge : on ne rouvre rien
+        readLibraryFile(st->id, fingerprint, refs, runId);
+        if (++written % 200 == 0) {
+            m_repo->commitBatch();
+            m_repo->beginBatch();
+        }
+    }
+    m_repo->commitBatch();
+}
+
+void Indexer::readLibraryFile(int fileId, const QString& fingerprint,
+                              const QVector<SidecarRef>& refs, int runId) {
+    constexpr qint64 kMaxSidecarBytes = 16 * 1024 * 1024;
+    QVector<ProviderRead> reads;
+    QVector<SidecarEntry> entries;
+    for (const SidecarRef& ref : refs) {
+        QFile f(ref.path);
+        QByteArray bytes;
+        const bool opened = f.open(QIODevice::ReadOnly);
+        if (opened)
+            bytes = f.read(kMaxSidecarBytes + 1);
+        // Le format se reconnait a l'extension : `.dop` = DxO PhotoLab, le reste du XMP.
+        const bool isDop = ref.name.endsWith(QLatin1String(".dop"), Qt::CaseInsensitive);
+        const bool sizeOk = opened && bytes.size() <= kMaxSidecarBytes;
+        XmpDocument xdoc;
+        if (!isDop && sizeOk)
+            xdoc = parseXmp(bytes);
+        ProviderRead read = isDop
+            ? (sizeOk ? readSidecarDop(bytes, ref.version) : ProviderRead())
+            : readSidecarXmp(xdoc, ref.version);
+        if (read.source.isEmpty()) {
+            // Illisible ou pas du XMP : compte dans le rapport, ne bloque rien.
+            entries.push_back({ref.name, QString(), false});
+            m_repo->logError(runId, ref.path, QStringLiteral("library"),
+                             opened ? QStringLiteral("sidecar illisible") : f.errorString(), nowIso());
+            continue;
+        }
+        // Lightcraft ecrit dans le meme .xmp que darktable : le drapeau `lc:flag` est lu a part, attribue
+        // a `lightcraft`, meme si le fichier est classe darktable (ou n'est pas un fournisseur actif).
+        if (!isDop && m_libraryProviders.contains(QStringLiteral("lightcraft"))) {
+            const ProviderRead lc = readSidecarLightcraft(xdoc, ref.version);
+            if (!lc.source.isEmpty())
+                reads.push_back(lc);
+        }
+        // Un sidecar darktable lu avec le seul fournisseur « xmp » reste exploitable.
+        if (!m_libraryProviders.contains(read.source)) {
+            if (read.source == QLatin1String("darktable") && m_libraryProviders.contains(QStringLiteral("xmp")))
+                read.source = QStringLiteral("xmp");
+            else
+                continue;   // fournisseur non active : le sidecar n'existe pas pour nous
+        }
+        entries.push_back({ref.name, read.source, true});
+        reads.push_back(read);
+    }
+    // XMP embarque, deja lu par ExifTool : aucune relecture du fichier image.
+    const ProviderRead embedded = readEmbedded(m_repo->rawExif(fileId));
+    if (!embedded.source.isEmpty())
+        reads.push_back(embedded);
+
+    LibraryResult result = mergeReads(reads, m_libraryProviders);
+    result.sidecars = entries;
+    m_repo->writeLibrary(fileId, fingerprint, result);
 }
 
 void Indexer::refreshContexts(const QSet<QString>& directories, int runId, RunCounts& counts) {

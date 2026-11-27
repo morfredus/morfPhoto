@@ -3,6 +3,143 @@
 Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/)
 et du [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [0.24.0] - 2026-11-27
+
+### Added
+
+- `lc:flag` = `reject` is read: `rejected: true` and `picked: false`, attributed to `lightcraft`. The three states `pick`, `none` and `reject` are now confirmed on real files (a rejected photo showed `reject`). A flag is a single state, so `pick` and `none` also say "not rejected" (`rejected: false`).
+
+### Changed
+
+- **`rejected` is resolved by "one provider is enough"**, like `edited`: true as soon as one provider says the version is rejected, false if at least one says it is not and none says the opposite, unknown otherwise. Before, the first provider with a value won, so a photo rejected in Lightcraft stayed "not rejected" behind darktable (which says "not rejected" for any rating from 0 to 5). The only photos that change are those where providers disagree.
+- The source recorded for `edited` and `rejected` is now the first provider that gave the winning value (it could name a provider that said the opposite).
+
+### Tested on a real file
+
+- The real flagged `.xmp` was read on a copy (then removed), with the flag set to `reject` in the copy: `rejected: true`, `picked: false`, attributed to `lightcraft`, while the rating and the edited state stayed with darktable; the default listing hides it and `?rejected=only` returns it. The file on disk read `pick` at the time of the run (the flag had been changed again since), so the confirmation of `reject` comes from the content shown by the user, and the run used a copy edited to `reject`.
+
+## [0.23.0] - 2026-11-27
+
+### Added
+
+- `lightcraft` provider and the `picked` field. Lightcraft writes its own `lc:` properties in the same `.xmp` as darktable; its flag `lc:flag` is read as a picked photo: `pick` gives `picked: true`, `none` gives `false`. Both values are confirmed on a real file (the flag read `none`, then `pick` after it was set). Any other value, such as `reject`, stays unknown because its meaning is not confirmed, and `lc:settings` (the editing settings in JSON) is not read. The value is attributed to `lightcraft` even though the file is classified `darktable`, so `sources.picked` tells the truth.
+- A version carries `picked` (`true`, `false` or `null`), `/api/v1/library` accepts `?picked=true|false` (a photo passes if one of its versions does, an unknown value never passes), and the dataset gets a `picked` column (principal version) with `with=library`. `/library/sidecars` and the `library` block of the index status count `with_lightcraft` / `by_source.lightcraft`.
+- Schema v8: a `picked` column on `library_versions`. The sidecar fingerprint format changes, so every photo is read again on the next pass, from its sidecars and its stored EXIF tags, without ExifTool.
+
+### Tested on a real file
+
+- The real `.xmp` where the flag is `pick` was read on a copy (then removed): `picked: true` attributed to `lightcraft`, the rating and the edited state still coming from darktable. The committed tests use a reduced, anonymised version.
+
+## [0.22.0] - 2026-11-27
+
+### Added
+
+- `dxo` provider: DxO PhotoLab sidecars (`photo.ext.dop`, version 0). A `.dop` is not XML but a text file of nested tables (`Name = { ... },`), read by a small bounded parser (depth, size and node limits, so a corrupt file cannot overflow the stack or the memory). It reads what a real PhotoLab 8.23 file confirms: the rating (0 to 5), the keywords (each inner table is one hierarchical keyword, and the internal darktable tags that PhotoLab imports are dropped like everywhere else), the decimal GPS position and the copyright notice (IPTC). `Edited` stays unknown on purpose: PhotoLab writes a `.dop` as soon as an image is opened, with automatic corrections already applied, so its presence proves nothing; a rule needs a second file, edited by hand. Only the first element of `Items` is read, the format of virtual copies not being confirmed. `/library/sidecars`, the `source` filter and `gps_source` know the new `dxo` name.
+- Scanner: `.dop` files are collected next to `.xmp` files and attached to their image by name (`IMG.DNG.dop` is the version 0 of `IMG.DNG`, together with its `IMG.DNG.xmp` if any).
+
+### Tested on real files
+
+- A real PhotoLab `.dop` and a real mixed XMP (darktable plus a second editor writing its properties as elements in a second `rdf:Description`, with a hierarchical keyword that is only a darktable internal tag) were read through the whole chain on copies, then removed: both sidecars are detected, the rating, the position and the "edited" state come out right and the internal keywords are dropped. The committed tests use reduced and anonymised versions (position, copyright and most settings replaced; structure and syntax unchanged), never the original files.
+
+### Not read yet
+
+- The `lc:` properties of the second editor in that XMP (`lc:settings`, `lc:flag`): their meaning is not confirmed, so nothing is guessed.
+
+## [0.21.0] - 2026-11-27
+
+### Added
+
+- `GET /api/v1/photos/dataset?with=gps` adds `latitude`, `longitude` and `gps_source` (dictionary: `file` or the program whose sidecar gave the position) so a client can draw a map. The EXIF of the file is the authority and a sidecar position is used only when the file has none; a photo with no position stays `null`, never (0, 0). `with` now takes a comma separated list (`library`, `gps`, both), independent of each other, and an unknown value answers `400`. Without the option the response is unchanged.
+
+## [0.20.2] - 2026-11-27
+
+### Fixed
+
+- A pass over unchanged photos spent almost all its time in the perimeter guard. Profiling (temporary timers per phase, 3 000 photos, 3 passes) showed `isWithinRoots` at about 0.8 ms per call, called for each photo three times (counting, indexing, library): 2.4 s + 2.4 s of a 5.0 s pass, and the whole 2.6 s library surcharge. The cause is the real-path resolution (links, case, `..`) of the file and of every root at each call. The guard now resolves the directory once (cached per pass) for an ordinary file, whose place is the one of its directory, and still resolves each link individually since a link may point outside the root (`FileInfo::isSymlink`). The guard keeps its meaning; only its cost changes.
+- Measured on the same 3 000 photos, fake ExifTool, Windows disk: a pass without change went from 5.0 s to 0.30 s with the library off, and from 7.6 s to 0.31 to 0.64 s with it on (16 to 25 times faster). The suspicion left open by 0.20.1 is settled: it was this guard, not the library.
+
+### Not exercised
+
+- The link branch (`isSymlink`) is not covered by a test: creating a symbolic link on Windows needs a privilege, so it remains to be checked on Linux.
+
+## [0.20.1] - 2026-11-27
+
+### Changed
+
+- Documentation only: measured effect of the grouped indexing writes of 0.20.0, same synthetic corpus of 3 000 photos, ExifTool failing on every file, run on a Windows disk. A pass over unchanged photos: library off 12.9 s before, 5.2 s after (2.5 times faster); library on 9.4 s before, 7.8 s after (1.2 times faster). A first full pass: library off 141.5 s before, 130.0 s after; library on 167.3 s before, 154.2 s after (about 8 % faster, dominated by the failing ExifTool). Reads did not change (every `/library` request stays under 50 ms). What remains of an unchanged pass (about 1.7 ms per photo with the library off, 2.6 ms with it on) is not explained yet: it has not been profiled, so no cause is claimed.
+
+## [0.20.0] - 2026-11-27
+
+### Added
+
+- Cursor pagination on `GET /api/v1/library`: the response carries `next` (opaque, `null` on the last page) and `?cursor=` continues from it, ordered by capture date (undated photos last) then identifier. Unlike `page`, it skips or repeats no photo when the catalogue changes between two reads (a pass running during a long read). An unreadable cursor answers `400`.
+- `ETag` and `304 Not Modified` on `/library...` and `photos/dataset`: the validator is the catalogue revision (`PhotoModule::catalogRevision`), new at each start, after each indexing pass and after each write through the API. A request whose `If-None-Match` matches is answered `304` before anything is computed, so the server work is saved, not only the bandwidth. `Cache-Control: no-cache` makes clients revalidate.
+
+### Changed
+
+- Indexing writes are grouped: a pass now commits by batches of 200 files or one second instead of one SQLite commit (one `fsync`) per file. On a synthetic corpus of 3 000 unchanged photos a pass took 9 to 13 s, almost all of it spent synchronising the disk (about 4 ms per file); the ExifTool extraction stays outside any transaction, so a slow file never holds a write lock open.
+
+### Measured
+
+- On 5 000 photos (library on) every read is under 60 ms: `/library` page of 500 in 35 ms (deep page 49 ms), facets 50 ms, the `with=library` dataset 48 ms for 550 KB. Reading was not the bottleneck, so no extra index was added; the library adds about 18 % to a first full pass (167 s against 141 s for 3 000 photos, ExifTool failing on every file) and nothing noticeable to an unchanged pass.
+
+## [0.19.1] - 2026-11-27
+
+### Fixed
+
+- `/library/sidecars` and the `library` block of the index status counted an unreadable sidecar as a sidecar of an "unknown" software. Unreadable sidecars are now counted only in `unreadable`; `by_source` and `with_sidecar` (and so `without_sidecar`) only count sidecars that could be read. Found while building the PhotoHub panel.
+
+## [0.19.0] - 2026-11-27
+
+### Added
+
+- Photo library, read-only (contract `morfphoto-library/1`, morfSystem 1.9.0): the layer that programs leave beside the images (rating, reject flag, colour labels, keywords, title, "edited", versions). It is off by default and turned on by naming providers in `sidecars.providers` (`darktable`, `xmp`); the XMP embedded in the image (`file`) is always read last. Each field is resolved on its own by provider priority, an unknown value stays `null`, the EXIF of the image remains the authority on the shot and no sidecar is ever written.
+- `GET /api/v1/library` (photos with their versions, filters `min_rating`, `rejected`, `edited`, `color_label`, `unlabeled`, `source`, `keyword` with hierarchical descendants, the EXIF filters, dates, folder and file name), `/library/{id}` and `?ids=`, `/library/facets` (each list counted with every filter but its own, plus the unknown values), `/library/subfolders`, `/library/sidecars` (providers, photos per provider, unreadable sidecars). `404 library_disabled` while the library is off.
+- `GET /api/v1/photos/dataset?with=library` adds the library columns (`rating`, `rejected`, `edited`, `edited_any`, `rating_max`, `versions`, `color_labels`, `source`, `keywords` and their dictionaries) with one row per photo; without the option the response is unchanged.
+- `/api/v1/index/status` carries a `library` block, the beacon announces the `photo_library` capability when the library is on, and the schema moves to v7 (`library_files`, `library_versions`, `library_keywords`, `library_sidecars`, all rebuildable).
+- Incremental by fingerprint: turning the library on re-reads each photo once, then only photos whose sidecar list changed are read again; turning it off removes its values and leaves the EXIF alone.
+
+### Not yet
+
+- Cursor pagination and `ETag`/`304` on `/library` (planned with the indexing performance work), and the sidecars of Capture One, RawTherapee, DxO and ON1 (formats to be checked on real files first).
+
+Inspired by the EXIF + XMP library of the Rhettus/morfPhoto fork (Immage); the sidecar layer is rewritten as a provider interface instead of being tied to darktable.
+
+## [0.18.2] - 2026-11-27
+
+### Changed
+
+- Documentation only: the roadmap points to the proposed `morfphoto-library/1` contract (photo library layer read from the sidecars of several programs), kept in the morfSystem repository.
+
+## [0.18.1] - 2026-11-27
+
+### Changed
+
+- Documentation only: the README no longer says that morfAnalytics cannot send the API key (it can since 0.80.0).
+
+## [0.18.0] - 2026-11-27
+
+### Added
+
+- Optional API key: `api_key` in the configuration, or the `MORFPHOTO_API_KEY` environment variable (it wins), makes every `/api/` route require `Authorization: Bearer <key>` and answer `401 unauthorized` otherwise. The key is compared through SHA-256 digests over their full length, so the response time reveals nothing about it. With no key configured nothing changes, so no existing client of the fleet breaks.
+- `/status` reports `api_key_required` (a boolean, never the key). `/healthz`, `/status` and `/modules` stay open so supervision keeps working.
+
+Note: morfAnalytics sends the key from 0.80.0 on. Inspired by the API key of the Rhettus/morfPhoto fork (Immage), rewritten for this code base.
+
+## [0.17.0] - 2026-11-27
+
+### Added
+
+- Grid thumbnails: `GET /api/v1/thumbnail` now returns an image of at most 400 px on its longest side. A full-size JPEG is decoded directly at reduced size (no ExifTool process, orientation applied); a RAW uses its embedded `PreviewImage`, with `ThumbnailImage` as fallback, scaled down to the grid. A preview that is already small (400 px, 1 MB) is served untouched.
+- Disk cache for those thumbnails, under `<state>/cache/thumbnails` (rebuildable, safe to delete). The key follows path, size and modification date, so an edited or replaced photo is never served from a stale thumbnail. Writes are atomic, the size is capped (`thumbnails.max_mb`, default 512) with the least recently used removed first, and writes stop when the disk is nearly full (`thumbnails.min_free_mb`, default 512). `thumbnails.cache` set to `false` turns it off.
+- `/status` reports the cache (`thumbnails`: `enabled`, `dir`, `hits`, `misses`, `writes`, `full`).
+
+### Changed
+
+- morfPhoto now links Qt Gui, used only for `QImage` and `QImageReader` (no window, no display). On Debian the package pulls `libqt6gui6`.
+
+Inspired by the thumbnail work in the Rhettus/morfPhoto fork (Immage), rewritten for this code base.
+
 ## [0.16.1] - 2026-11-26
 
 ### Fixed

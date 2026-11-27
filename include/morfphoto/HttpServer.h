@@ -41,13 +41,15 @@ private:
     void onNewConnection();
     void onSocketReadyRead(QTcpSocket* sock);
     void handleRequest(QTcpSocket* sock, const QByteArray& method,
-                       const QByteArray& path, const QByteArray& body);
+                       const QByteArray& path, const QByteArray& body,
+                       const QByteArray& authorization, const QByteArray& ifNoneMatch);
     QByteArray buildStatusJson() const;
     void reply(QTcpSocket* sock, int code, const QByteArray& reason, const QByteArray& body,
                const QByteArray& contentType = QByteArrayLiteral("application/json; charset=utf-8"),
-               bool allowCors = false);
+               bool allowCors = false, const QByteArray& etag = {});
 
     ServiceConfig   m_config;
+    QByteArray      m_apiKey;   // cle effective (env > config), vide = API ouverte
     ModuleRegistry* m_registry;
     QTcpServer*     m_server;
     QElapsedTimer   m_uptime;

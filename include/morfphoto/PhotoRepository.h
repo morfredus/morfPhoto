@@ -14,6 +14,7 @@
 #include <QVariantMap>
 
 #include "morfphoto/PhotoTypes.h"
+#include "morfphoto/LibraryMetadata.h"
 
 // -----------------------------------------------------------------------------
 // PhotoRepository : accès SQLite du domaine photo. Toutes les requêtes SQL vivent
@@ -118,7 +119,40 @@ public:
     // les chaines repetees (boitier, objectif, type) : une seule reponse legere meme
     // sur 20 000+ photos. Valeurs BRUTES, aucun regroupement ; les NULL sont
     // preserves (distinguer valeur absente de valeur nulle, cf qualite des metadonnees).
-    QJsonObject photoDataset();
+    // `withLibrary` : ajoute les colonnes de la bibliotheque (rating, edited, keywords...),
+    // une ligne par photo (contrat, §9). Sans lui, la reponse est celle d'avant.
+    // `withGps` : ajoute latitude, longitude et leur provenance (le fichier d'abord, a defaut un
+    // sidecar), pour une carte. Independant de `withLibrary` : l'EXIF seul suffit.
+    QJsonObject photoDataset(bool withLibrary = false, bool withGps = false);
+
+    // --- Bibliotheque (contrat morfphoto-library/1) -------------------------------
+    // Etat de lecture par fichier d'un dossier : identifiant et empreinte de la derniere
+    // lecture (vide si le fichier n'a jamais ete lu par la bibliotheque).
+    struct LibraryFileState { int id = 0; QString fingerprint; };
+    QHash<QString, LibraryFileState> libraryState(int folderId);
+    // Tags ExifTool bruts d'un fichier (raw_exif), pour lire l'XMP embarque sans relancer
+    // ExifTool.
+    QJsonObject rawExif(int fileId);
+    // Remplace tout ce que la bibliotheque sait de ce fichier.
+    void writeLibrary(int fileId, const QString& fingerprint, const LibraryResult& result);
+    // Retire tout (bibliotheque eteinte) ; renvoie le nombre de fichiers concernes.
+    int  clearLibrary();
+    // Transaction englobante : une ecriture par fichier sans elle serait lente (un fsync
+    // chacune). Un dossier = une transaction.
+    bool beginBatch();
+    void commitBatch();
+    // Lectures de l'API /library.
+    QJsonObject libraryPhoto(int fileId, bool* found);
+    QJsonArray  libraryPhotos(const QVector<int>& ids);
+    // Avec `cursor`, la page suit la position du curseur (cle de tri : date de prise de vue,
+    // les sans date a la fin, puis identifiant) au lieu d'un decalage : pas de photo sautee ou
+    // doublee si le catalogue change entre deux pages. `next` rend le curseur suivant, ou null.
+    QJsonObject libraryList(const LibraryFilter& filter, int page, int pageSize, bool skipTotal,
+                            const QString& cursor = {}, bool* cursorValid = nullptr);
+    QJsonObject libraryFacets(const LibraryFilter& filter);
+    QJsonObject librarySubfolders(const QString& folder);
+    QJsonObject librarySidecars();
+    QJsonObject libraryStatus();     // bloc `library` de /index/status (comptes par source)
 
     // --- Purge (suppression DÉFINITIVE, à distinguer du retrait doux) ---
     // Efface RÉELLEMENT des lignes de la base (aucune restauration possible). Chaque

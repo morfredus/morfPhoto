@@ -23,7 +23,7 @@
 // -----------------------------------------------------------------------------
 namespace morfphoto {
 
-inline constexpr int kSchemaVersion = 6;
+inline constexpr int kSchemaVersion = 8;
 
 // Instructions de la migration 001 (création initiale). La colonne calculée
 // `taken_year` permet de regrouper par année sans reparser la date à chaque fois.
@@ -210,6 +210,69 @@ inline QStringList schemaV6Statements() {
     };
 }
 
+// Migration 007 : BIBLIOTHEQUE (contrat morfphoto-library/1). Tables a part : `files` ne
+// change pas, donc les reponses existantes de l'API non plus. Tout est reconstructible
+// depuis les sidecars et l'XMP embarque ; ON DELETE CASCADE suit la vie de `files` (purge,
+// retrait). Une valeur inconnue reste NULL (une note absente n'est pas une note de 0).
+inline QStringList schemaV7Statements() {
+    return {
+        QStringLiteral(
+            "CREATE TABLE library_files ("
+            "  file_id        INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,"
+            "  fingerprint    TEXT    NOT NULL,"
+            "  versions       INTEGER NOT NULL,"
+            "  main_source    TEXT,"
+            "  gps_latitude   REAL,"
+            "  gps_longitude  REAL,"
+            "  gps_source     TEXT"
+            ")"),
+        QStringLiteral(
+            "CREATE TABLE library_versions ("
+            "  id           INTEGER PRIMARY KEY,"
+            "  file_id      INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,"
+            "  version      INTEGER NOT NULL,"
+            "  is_copy      INTEGER NOT NULL,"
+            "  name         TEXT,"
+            "  rating       INTEGER,"
+            "  rejected     INTEGER,"
+            "  labels       INTEGER NOT NULL,"
+            "  edited       INTEGER,"
+            "  title        TEXT,"
+            "  description  TEXT,"
+            "  creator      TEXT,"
+            "  rights       TEXT,"
+            "  sources      TEXT,"
+            "  UNIQUE (file_id, version)"
+            ")"),
+        QStringLiteral(
+            "CREATE TABLE library_keywords ("
+            "  version_id INTEGER NOT NULL REFERENCES library_versions(id) ON DELETE CASCADE,"
+            "  keyword    TEXT    NOT NULL,"
+            "  PRIMARY KEY (version_id, keyword)"
+            ") WITHOUT ROWID"),
+        QStringLiteral(
+            "CREATE TABLE library_sidecars ("
+            "  file_id  INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,"
+            "  name     TEXT    NOT NULL,"
+            "  source   TEXT,"
+            "  readable INTEGER NOT NULL,"
+            "  PRIMARY KEY (file_id, name)"
+            ") WITHOUT ROWID"),
+        QStringLiteral("CREATE INDEX idx_library_versions_rating ON library_versions(rating, rejected)"),
+        QStringLiteral("CREATE INDEX idx_library_keywords_kw ON library_keywords(keyword)"),
+        QStringLiteral("CREATE INDEX idx_library_sidecars_source ON library_sidecars(source)"),
+    };
+}
+
+// Migration 008 : drapeau « retenue » (`picked`) des versions de la bibliotheque. Simple colonne ajoutee ;
+// NULL = inconnu jusqu'a la prochaine lecture (l'empreinte des sidecars change, les photos sont relues
+// sans repasser par ExifTool).
+inline QStringList schemaV8Statements() {
+    return {
+        QStringLiteral("ALTER TABLE library_versions ADD COLUMN picked INTEGER"),
+    };
+}
+
 // Instructions à exécuter pour atteindre une version de schéma donnée. Le dépôt
 // applique dans l'ordre chaque version manquante (voir applyMigrations).
 inline QStringList migrationStatements(int version) {
@@ -220,6 +283,8 @@ inline QStringList migrationStatements(int version) {
     case 4:  return schemaV4Statements();
     case 5:  return schemaV5Statements();
     case 6:  return schemaV6Statements();
+    case 7:  return schemaV7Statements();
+    case 8:  return schemaV8Statements();
     default: return {};
     }
 }

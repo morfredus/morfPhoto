@@ -10,6 +10,7 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QDate>
 #include <QUrl>
 #include <QUrlQuery>
 #include <QStringList>
@@ -46,14 +47,125 @@ int positiveIntParam(const QUrlQuery& q, const QString& key, int fallback) {
     return (ok && n >= 1) ? n : -1;
 }
 
+// Criteres de GET /api/v1/library (contrat morfphoto-library/1, §8). Un parametre repete
+// vaut « l'un de » ; false + *detail si une valeur est invalide.
+bool parseLibraryFilter(const QUrlQuery& query, LibraryFilter* f, QString* detail) {
+    auto list = [&query](const char* key) {
+        return query.allQueryItemValues(QLatin1String(key), QUrl::FullyDecoded);
+    };
+    auto text = [&query](const char* key) {
+        return query.queryItemValue(QLatin1String(key), QUrl::FullyDecoded);
+    };
+    auto flag = [&text](const char* key) {
+        return text(key) == QLatin1String("true") || text(key) == QLatin1String("1");
+    };
+    if (!text("min_rating").isEmpty()) {
+        bool ok = false;
+        f->minRating = text("min_rating").toInt(&ok);
+        if (!ok || f->minRating < 0 || f->minRating > 5) {
+            *detail = QStringLiteral("`min_rating` doit etre compris entre 0 et 5");
+            return false;
+        }
+    }
+    if (!text("rejected").isEmpty()) {
+        f->rejected = text("rejected");
+        if (!QStringList{"hide", "only", "all"}.contains(f->rejected)) {
+            *detail = QStringLiteral("`rejected` : hide, only ou all");
+            return false;
+        }
+    }
+    f->edited = text("edited");
+    if (!QStringList{"", "all", "edited", "unedited"}.contains(f->edited)) {
+        *detail = QStringLiteral("`edited` : all, edited ou unedited");
+        return false;
+    }
+    f->picked = text("picked");
+    if (!QStringList{"", "true", "false"}.contains(f->picked)) {
+        *detail = QStringLiteral("`picked` : true ou false");
+        return false;
+    }
+    f->colorLabels = list("color_label");
+    for (const QString& label : f->colorLabels) {
+        if (labelMaskFromName(label) == 0) {
+            *detail = QStringLiteral("`color_label` : red, yellow, green, blue ou purple (recu : %1)").arg(label);
+            return false;
+        }
+    }
+    f->takenFrom = text("taken_from");
+    f->takenTo   = text("taken_to");
+    for (const QString& date : {f->takenFrom, f->takenTo}) {
+        if (!date.isEmpty() && !QDate::fromString(date, QStringLiteral("yyyy-MM-dd")).isValid()) {
+            *detail = QStringLiteral("date attendue au format AAAA-MM-JJ : %1").arg(date);
+            return false;
+        }
+    }
+    f->sources   = list("source");
+    for (const QString& s : f->sources) {
+        if (!knownProviders().contains(s) && s != embeddedProviderId()) {
+            *detail = QStringLiteral("`source` inconnue : %1").arg(s);
+            return false;
+        }
+    }
+    f->unlabeled = flag("unlabeled");
+    f->recursive = flag("recursive");
+    f->keywords  = list("keyword");
+    f->kinds     = list("kind");
+    f->cameras   = list("camera");
+    f->lenses    = list("lens");
+    f->iso       = list("iso");
+    f->aperture  = list("aperture");
+    f->focal     = list("focal");
+    f->shutter   = list("shutter");
+    f->filename  = text("filename");
+    f->folderPath = text("folder_path");
+    while (f->folderPath.size() > 1 && f->folderPath.endsWith(QLatin1Char('/')))
+        f->folderPath.chop(1);
+    return true;
+}
+
 } // namespace
 
 PhotoApi::PhotoApi(PhotoModule* module) : m_module(module) {}
 
 PhotoApi::Result PhotoApi::handle(const QByteArray& method, const QString& path,
-                                  const QString& queryString, const QByteArray& body) {
+                                  const QString& queryString, const QByteArray& body,
+                                  const QByteArray& ifNoneMatch) {
     if (!m_module)
         return error(503, QStringLiteral("unavailable"), QStringLiteral("module photo absent"));
+
+    // Une ecriture (declarer un dossier, purger, qualifier un contexte, declencher une passe)
+    // peut changer ce que les lectures renvoient : invalider les ETag deja distribues.
+    if (method != "GET")
+        m_module->bumpCatalogRevision();
+
+    // ETag / 304 sur les lectures lourdes de la bibliotheque et l'export d'analyse. Le
+    // validateur est la revision du catalogue : tant qu'elle est la meme, la reponse l'est
+    // aussi, et un client qui la connait ne retelecharge rien. On repond 304 AVANT de
+    // calculer quoi que ce soit : c'est le travail du serveur qui est economise, pas
+    // seulement la bande passante.
+    const bool cacheable = method == "GET"
+        && (path.startsWith(QLatin1String("/api/v1/library"))
+            || path == QLatin1String("/api/v1/photos/dataset"));
+    QByteArray etag;
+    if (cacheable) {
+        etag = '"' + m_module->catalogRevision().toLatin1() + '"';
+        // Une bibliotheque eteinte repond 404 : ne pas la masquer derriere un 304.
+        const bool libraryOff = path.startsWith(QLatin1String("/api/v1/library")) && !m_module->libraryEnabled();
+        if (!libraryOff && !ifNoneMatch.isEmpty()
+            && (ifNoneMatch.trimmed() == "*" || ifNoneMatch.contains(etag))) {
+            Result r{304, QByteArray()};
+            r.etag = etag;
+            return r;
+        }
+    }
+    Result r = handleRoute(method, path, queryString, body);
+    if (cacheable && r.code == 200)
+        r.etag = etag;
+    return r;
+}
+
+PhotoApi::Result PhotoApi::handleRoute(const QByteArray& method, const QString& path,
+                                       const QString& queryString, const QByteArray& body) {
 
     QString sub = path;
     if (sub.endsWith('/'))
@@ -121,7 +233,16 @@ PhotoApi::Result PhotoApi::handle(const QByteArray& method, const QString& path,
         }
         const QString& what = seg[1];
         if (what == QLatin1String("summary")) return ok(m_module->summary());
-        if (what == QLatin1String("dataset")) return ok(m_module->photoDataset());
+        if (what == QLatin1String("dataset")) {
+            // `with` : liste separee par des virgules d'options. `library` ajoute les colonnes de la
+            // bibliotheque, `gps` la position (carte) ; sans option, rien ne change.
+            const QStringList with = query.queryItemValue(QStringLiteral("with")).split(QLatin1Char(','), Qt::SkipEmptyParts);
+            for (const QString& w : with)
+                if (w != QLatin1String("library") && w != QLatin1String("gps"))
+                    return error(400, QStringLiteral("bad_request"), QStringLiteral("`with` : library, gps"));
+            return ok(m_module->photoDataset(with.contains(QStringLiteral("library")),
+                                             with.contains(QStringLiteral("gps"))));
+        }
         if (what == QLatin1String("cameras")) return items(m_module->cameras());
         if (what == QLatin1String("lenses"))  return items(m_module->lenses());
         if (what == QLatin1String("focals"))  return items(m_module->focals());
@@ -210,6 +331,82 @@ PhotoApi::Result PhotoApi::handle(const QByteArray& method, const QString& path,
             return ok(out);
         }
         return error(405, QStringLiteral("method_not_allowed"));
+    }
+
+    // ---- /library... : bibliotheque (contrat morfphoto-library/1), lecture seule ----
+    // Eteinte tant qu'aucun fournisseur de sidecars n'est configure : 404 explicite plutot
+    // qu'une liste vide qui laisserait croire qu'il n'y a aucun sidecar.
+    if (!seg.isEmpty() && seg[0] == QLatin1String("library")) {
+        if (!m_module->libraryEnabled())
+            return error(404, QStringLiteral("library_disabled"),
+                         QStringLiteral("activer au moins un fournisseur dans `sidecars.providers`"));
+        if (method != "GET")
+            return error(405, QStringLiteral("method_not_allowed"));
+        if (seg.size() == 2 && seg[1] == QLatin1String("sidecars"))
+            return ok(m_module->librarySidecars());
+        if (seg.size() == 2 && seg[1] == QLatin1String("subfolders")) {
+            QString folder = query.queryItemValue(QStringLiteral("folder_path"), QUrl::FullyDecoded);
+            while (folder.size() > 1 && folder.endsWith(QLatin1Char('/')))
+                folder.chop(1);
+            // Chemin absolu : « /... » (Linux, UNC) ou « C:/... » (morfPhoto sous Windows).
+            const bool absolute = folder.startsWith(QLatin1Char('/'))
+                || (folder.size() >= 3 && folder.at(0).isLetter() && folder.at(1) == QLatin1Char(':')
+                    && (folder.at(2) == QLatin1Char('/') || folder.at(2) == QLatin1Char('\\')));
+            if (!absolute)
+                return error(400, QStringLiteral("invalid_folder_path"),
+                             QStringLiteral("`folder_path` : chemin absolu attendu"));
+            const QJsonObject result = m_module->librarySubfolders(folder);
+            return result.isEmpty() ? error(503, QStringLiteral("catalog_unavailable")) : ok(result);
+        }
+        if (seg.size() == 2 && seg[1] != QLatin1String("facets")) {
+            bool okId = false;
+            const int id = seg[1].toInt(&okId);
+            bool found = false;
+            const QJsonObject photo = okId ? m_module->libraryPhoto(id, &found) : QJsonObject();
+            if (!found)
+                return error(404, QStringLiteral("not_found"), path);
+            return ok(photo);
+        }
+        if (seg.size() > 2)
+            return error(404, QStringLiteral("not_found"), path);
+        if (seg.size() == 1 && query.hasQueryItem(QStringLiteral("ids"))) {
+            const QString rawIds = query.queryItemValue(QStringLiteral("ids"), QUrl::FullyDecoded).trimmed();
+            if (rawIds.isEmpty())
+                return items(QJsonArray{});
+            const QStringList parts = rawIds.split(QLatin1Char(','));
+            if (parts.size() > kMaxPageSize)
+                return error(400, QStringLiteral("bad_request"), QStringLiteral("ids : %1 au plus").arg(kMaxPageSize));
+            QVector<int> ids;
+            for (const QString& part : parts) {
+                bool okId = false;
+                const int id = part.trimmed().toInt(&okId);
+                if (!okId || id < 1)
+                    return error(400, QStringLiteral("bad_request"), QStringLiteral("ids invalide"));
+                ids.append(id);
+            }
+            return items(m_module->libraryPhotos(ids));
+        }
+        LibraryFilter filter;
+        QString detail;
+        if (!parseLibraryFilter(query, &filter, &detail))
+            return error(400, QStringLiteral("bad_request"), detail);
+        if (seg.size() == 2)
+            return ok(m_module->libraryFacets(filter));
+        const int page = positiveIntParam(query, QStringLiteral("page"), 1);
+        int pageSize   = positiveIntParam(query, QStringLiteral("page_size"), kDefaultPageSize);
+        if (page < 0 || pageSize < 0)
+            return error(400, QStringLiteral("bad_request"), QStringLiteral("page/page_size invalide"));
+        pageSize = qMin(pageSize, kMaxPageSize);
+        const QString skip = query.queryItemValue(QStringLiteral("skip_total"));
+        // `cursor` : pagination stable (voir contrat §7) ; il prime sur `page`.
+        const QString cursor = query.queryItemValue(QStringLiteral("cursor"), QUrl::FullyDecoded).trimmed();
+        bool cursorValid = true;
+        const QJsonObject list = m_module->libraryList(filter, page, pageSize,
+                                                       skip == QLatin1String("true") || skip == QLatin1String("1"),
+                                                       cursor, &cursorValid);
+        if (!cursorValid)
+            return error(400, QStringLiteral("bad_request"), QStringLiteral("cursor invalide"));
+        return ok(list);
     }
 
     // ---- /thumbnail : vignette JPEG d'un fichier (apercu, ex. pour PhotoHub) ----

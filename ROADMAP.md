@@ -6,7 +6,11 @@ par dossier) et les servir en HTTP. Cette feuille de route se limite à ce péri
 
 ## Pistes
 
-Aucune piste propre au service n'est ouverte pour l'instant. Les évolutions qui le
+Une piste est posée : la **bibliothèque photo** (couche note, rejet, étiquettes, mots-clés,
+retouchée, lue dans les sidecars de plusieurs logiciels), décrite par le contrat
+`morfphoto-library/1` du dépôt morfSystem (`docs/CONTRAT-BIBLIOTHEQUE-PHOTO.md`). Elle reste
+en lecture seule et ne remplace jamais l'EXIF. Aucune autre piste propre au service n'est
+ouverte pour l'instant. Les évolutions qui le
 traversent (contrat de contexte photographique `morfphoto-context/2`, page Photo de
 morfAnalytics, dialogue avec PhotoHub) sont suivies dans les notes d'évolution du
 parc, car elles engagent plusieurs dépôts à la fois.

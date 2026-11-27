@@ -28,15 +28,21 @@ public:
         // Type MIME de la reponse. JSON par defaut ; certaines routes renvoient du
         // binaire (ex. une vignette image/jpeg). Le serveur HTTP l'utilise tel quel.
         QByteArray contentType = QByteArrayLiteral("application/json; charset=utf-8");
+        // Validateur de cache (ETag), vide s'il n'y en a pas. Voir PhotoModule::catalogRevision.
+        QByteArray etag;
     };
 
     explicit PhotoApi(PhotoModule* module);
 
     // Route une requête déjà réduite au chemin (sans query) + la query brute.
+    // `ifNoneMatch` : en-tete If-None-Match de la requete (ETag deja connu du client).
     Result handle(const QByteArray& method, const QString& path,
-                  const QString& queryString, const QByteArray& body);
+                  const QString& queryString, const QByteArray& body,
+                  const QByteArray& ifNoneMatch = {});
 
 private:
+    Result handleRoute(const QByteArray& method, const QString& path,
+                       const QString& queryString, const QByteArray& body);
     PhotoModule* m_module;
 };
 

@@ -43,13 +43,23 @@ constexpr int kTimeoutMs = 15000;
 constexpr int kProbeTimeoutMs = 5000;
 
 // Assemble le bloc d'arguments commun (JSON, charset, format de date, tags, fichier).
-QStringList argBlock(const QString& path) {
+// Tags XMP lus seulement quand la bibliotheque est activee. Groupes explicites : sans eux,
+// « Title » ou « Description » existent aussi en IPTC et en EXIF et ExifTool choisirait.
+const char* const kLibraryTags[] = {
+    "-XMP-xmp:Label", "-XMP-dc:Subject", "-XMP-lr:HierarchicalSubject", "-IPTC:Keywords",
+    "-XMP-dc:Title", "-XMP-dc:Description", "-XMP-dc:Creator", "-XMP-dc:Rights",
+};
+
+QStringList argBlock(const QString& path, bool libraryTags) {
     QStringList args;
     args << QStringLiteral("-json")
          << QStringLiteral("-charset") << QStringLiteral("filename=UTF8")
          << QStringLiteral("-d") << QString::fromLatin1(kDateFormat);
     for (const char* t : kTags)
         args << QString::fromLatin1(t);
+    if (libraryTags)
+        for (const char* t : kLibraryTags)
+            args << QString::fromLatin1(t);
     // `--` : ExifTool traite ensuite tout ce qui suit comme un nom de fichier, meme s'il
     // commence par `-` (sinon un fichier nomme « -execute » serait lu comme une option).
     args << QStringLiteral("--") << path;
@@ -192,7 +202,7 @@ QString ExifExtractor::readPersistent(const QString& path, QString* error) {
 
     // Pousser le bloc d'arguments, un par ligne, puis l'ordre d'exécution numéroté.
     QByteArray payload;
-    for (const QString& a : argBlock(path))
+    for (const QString& a : argBlock(path, m_libraryTags))
         payload += a.toUtf8() + "\n";
     payload += "-execute" + QByteArray::number(m_counter) + "\n";
     m_proc->write(payload);
@@ -216,7 +226,7 @@ QString ExifExtractor::readPersistent(const QString& path, QString* error) {
 
 QString ExifExtractor::readOnce(const QString& path, QString* error) {
     QProcess proc;
-    proc.start(m_binary, argBlock(path));
+    proc.start(m_binary, argBlock(path, m_libraryTags));
     if (!proc.waitForFinished(kTimeoutMs)) {
         *error = QStringLiteral("ExifTool: delai depasse pour %1").arg(path);
         return {};

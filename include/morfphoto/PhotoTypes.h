@@ -9,6 +9,7 @@
 #include <QVariant>
 #include <QJsonObject>
 #include <QHash>
+#include <QStringList>
 
 // -----------------------------------------------------------------------------
 // Types partagés du domaine photo : ce que le scan sait d'un fichier (FileInfo),
@@ -30,6 +31,9 @@ struct FileInfo {
     QString fileType;      // raw|jpeg|tiff|heic|png|webp|other
     qint64  size  = 0;
     qint64  mtime = 0;     // epoch entier, tel que le système de fichiers
+    // Le fichier est un lien (symbolique, raccourci) : son vrai emplacement peut etre ailleurs,
+    // donc le controle de perimetre doit le resoudre lui-meme (voir Indexer::fileWithinRoots).
+    bool    isSymlink = false;
 };
 
 // Métadonnées extraites d'un fichier, mappées sur les colonnes de `files`.
@@ -84,6 +88,22 @@ struct RunCounts {
     int missing     = 0;
     int errors      = 0;
     int unavailable = 0;   // sélections sautées car leur racine était indisponible
+};
+
+// Criteres de GET /api/v1/library (contrat morfphoto-library/1, §8). Une liste vide veut
+// dire « pas de filtre » ; plusieurs valeurs d'une meme liste valent « l'une de ».
+struct LibraryFilter {
+    int         minRating = -1;           // -1 = pas de filtre
+    QString     rejected = QStringLiteral("hide");   // hide | only | all
+    QString     edited;                   // "" | all | edited | unedited
+    QString     picked;                   // "" | true | false (drapeau « retenue »)
+    QStringList colorLabels;              // red, yellow...
+    bool        unlabeled = false;
+    QStringList sources, keywords, kinds, cameras, lenses, iso, aperture, focal, shutter;
+    QString     takenFrom, takenTo;       // AAAA-MM-JJ
+    QString     folderPath;
+    bool        recursive = false;
+    QString     filename;
 };
 
 using KnownFiles = QHash<QString, KnownFile>;   // chemin complet -> état connu

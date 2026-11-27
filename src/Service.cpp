@@ -53,6 +53,16 @@ bool Service::start() {
         // Capacite STABLE annoncee dans le heartbeat : les consommateurs (PhotoHub,
         // morfAnalytics) cherchent 'photo_index', jamais le nom du service.
         pc.capabilities        = { QStringLiteral("photo_index") };
+        // Bibliotheque (contrat morfphoto-library/1) : annoncee seulement si au moins un
+        // fournisseur de sidecars est configure. Un client la decouvre par capacite.
+        for (const ModuleDef& m : m_config.modules) {
+            if (m.type == QLatin1String("photo")
+                && !m.params.value(QStringLiteral("sidecars")).toObject()
+                        .value(QStringLiteral("providers")).toArray().isEmpty()) {
+                pc.capabilities << QStringLiteral("photo_library");
+                break;
+            }
+        }
         pc.udpPort             = m_config.beaconUdpPort;
         pc.broadcastIntervalMs = m_config.beaconIntervalMs;
         pc.statusPort          = m_http ? m_http->port() : 0;
